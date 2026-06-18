@@ -110,18 +110,25 @@ async function main(): Promise<void> {
     DIESEL: 3090n,
   };
   for (const grade of grades) {
-    await prisma.fuelTank.upsert({
-      where: { stationId_code: { stationId: station.id, code: `Tank-${grade.code}` } },
-      update: {},
-      create: {
-        stationId: station.id,
-        fuelGradeId: grade.id,
-        code: `Tank-${grade.code}`,
-        capacityLiters: 20000,
-        currentLiters: 12000,
-        minLiters: 2000,
-      },
+    // fuel_tank-д `@@unique([stationId, code])` БАЙХГҮЙ (partial unique index-ээр сольсон,
+    // CLAUDE.md §17.4) тул `upsert({ where: { stationId_code } })` ажиллахгүй → findFirst+create.
+    const tankCode = `Tank-${grade.code}`;
+    const existingTank = await prisma.fuelTank.findFirst({
+      where: { stationId: station.id, code: tankCode, deletedAt: null },
+      select: { id: true },
     });
+    if (!existingTank) {
+      await prisma.fuelTank.create({
+        data: {
+          stationId: station.id,
+          fuelGradeId: grade.id,
+          code: tankCode,
+          capacityLiters: 20000,
+          currentLiters: 12000,
+          minLiters: 2000,
+        },
+      });
+    }
     // Idempotent: идэвхтэй үнэ (effectiveTo=null) байхгүй үед л үүсгэнэ
     // (дахин seed хийхэд үнийн түүх давхардахаас сэргийлнэ)
     const currentPrice = await prisma.fuelPrice.findFirst({
