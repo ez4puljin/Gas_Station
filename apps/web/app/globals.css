@@ -1,0 +1,263 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Apple-style: цайвар саарал canvas, цагаан карт, системийн цэнхэр (#007AFF) */
+  --background: 210 20% 98%;
+  --foreground: 222 24% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 24% 12%;
+  --primary: 211 100% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 30% 96%;
+  --secondary-foreground: 222 24% 12%;
+  --muted: 210 25% 96%;
+  --muted-foreground: 220 9% 46%;
+  --accent: 210 30% 95%;
+  --accent-foreground: 222 24% 12%;
+  --destructive: 5 78% 56%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 20% 90%;
+  --input: 214 20% 90%;
+  --ring: 211 100% 50%;
+  --radius: 0.875rem;
+  --ease-apple: cubic-bezier(0.32, 0.72, 0, 1); /* Apple-style spring-out */
+}
+
+.dark {
+  --background: 222 24% 8%;
+  --foreground: 210 16% 96%;
+  --card: 222 20% 12%;
+  --card-foreground: 210 16% 96%;
+  --primary: 211 100% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 217 20% 18%;
+  --secondary-foreground: 210 16% 96%;
+  --muted: 217 18% 18%;
+  --muted-foreground: 217 12% 64%;
+  --accent: 217 20% 20%;
+  --accent-foreground: 210 16% 96%;
+  --destructive: 5 70% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 217 18% 22%;
+  --input: 217 18% 22%;
+  --ring: 211 100% 60%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html {
+  /* Apple системийн фонт стек (macOS/iOS → SF Pro, Windows → Segoe UI) */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI',
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+
+/* ── Apple-style animation + өнгөлгөө ──────────────────────────── */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes overlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Хуудас ачаалахад зөөлөн дээш гарч ирэх (Apple-like entrance) */
+main {
+  animation: fadeUp 0.45s var(--ease-apple) both;
+}
+
+/* Дараалсан карт/мөрүүд ээлж дараалан гарч ирэх (stagger) */
+.stagger > * {
+  animation: fadeUp 0.5s var(--ease-apple) both;
+}
+.stagger > *:nth-child(1) {
+  animation-delay: 0.03s;
+}
+.stagger > *:nth-child(2) {
+  animation-delay: 0.07s;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 0.11s;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 0.15s;
+}
+.stagger > *:nth-child(5) {
+  animation-delay: 0.19s;
+}
+.stagger > *:nth-child(6) {
+  animation-delay: 0.23s;
+}
+.stagger > *:nth-child(7) {
+  animation-delay: 0.27s;
+}
+.stagger > *:nth-child(8) {
+  animation-delay: 0.31s;
+}
+
+.animate-pop {
+  animation: popIn 0.28s var(--ease-apple) both;
+}
+.animate-overlay {
+  animation: overlayIn 0.2s ease-out both;
+}
+
+/* ── Резервуарын шингэн долгион (Liquid wave) ──────────────────── */
+@keyframes tankWave {
+  from {
+    transform: translate(0, -50%);
+  }
+  to {
+    transform: translate(-50%, -50%);
+  }
+}
+.tank-wave {
+  will-change: transform;
+}
+.tank-wave--front {
+  animation: tankWave 4.5s linear infinite;
+}
+.tank-wave--back {
+  animation: tankWave 7.5s linear infinite reverse;
+}
+/* Резервуарын долгион/дүүрэлт нь зориудын дата-виз эффект (хэрэглэгчийн хүсэлт) тул
+   reduced-motion үед ч ажиллана — зөвхөн эдгээр элемент л дүрмээс чөлөөлөгдөнө. */
+@media (prefers-reduced-motion: reduce) {
+  .tank-wave--front {
+    animation: tankWave 4.5s linear infinite !important;
+  }
+  .tank-wave--back {
+    animation: tankWave 7.5s linear infinite reverse !important;
+  }
+  .tank-rise {
+    transition:
+      height 1500ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 900ms ease,
+      color 700ms ease !important;
+  }
+}
+
+/* Дарахад зөөлөн жижгэрэх (Apple press feedback) */
+button:not(:disabled):active,
+a:active {
+  transform: scale(0.97);
+}
+button,
+a,
+[role='button'] {
+  transition:
+    transform 0.12s var(--ease-apple),
+    background-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease,
+    filter 0.15s ease;
+}
+
+/* Хүртээмжтэй focus ring */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring) / 0.6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Нарийхан, орчин үеийн scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.32);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.55);
+}
+
+/* Хөдөлгөөн багасгах хэрэглэгчдэд хүндэтгэл (a11y) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ── Тайлан хэвлэх (CLAUDE.md §7.4) ── */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .print-area {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    color: #000 !important;
+  }
+  .print-area table {
+    width: 100%;
+    font-size: 11px;
+    border-collapse: collapse;
+  }
+  .print-area th,
+  .print-area td {
+    border: 1px solid #d4d4d8;
+  }
+  .print-area .no-border th,
+  .print-area .no-border td {
+    border: none;
+  }
+  @page {
+    margin: 14mm;
+    size: A4;
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "Шатахуун станцын систем",
+  "short_name": "Fuel Retail",
+  "description": "Шатахуун түгээх станцын сүлжээний менежментийн систем",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#1d4ed8",
+  "lang": "mn",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

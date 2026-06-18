@@ -1,0 +1,947 @@
+// Fuel Retail System — Prisma schema
+// CLAUDE.md §6 домэйн загвар. Зөрчиж болохгүй зарчмууд (§2):
+//   • Мөнгө → BigInt (бүхэл MNT, float хэрэглэхгүй)
+//   • Салбар-хамааралтай entity бүрд stationId (§10 scoping)
+//   • Soft-delete: deletedAt (§2.6). Бодит устгал зөвхөн админ migration-аар.
+//   • audit_log нь APPEND-ONLY (§2.4) — UPDATE/DELETE-ийг migration triggerээр хорино.
+//   • Цаг бүгд UTC (Timestamptz) — §2.8.
+// DB баганa snake_case (@map / @@map) — §14.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enum-ууд — string утга нь packages/types/src/enums.ts-тэй ЯГ тохирно
+// ─────────────────────────────────────────────────────────────
+
+enum FuelGradeCode {
+  AI_80
+  AI_92
+  AI_95
+  DIESEL
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  FUEL_CARD
+  MOBILE
+  TRANSFER
+  CREDIT
+}
+
+enum CustomerTxnType {
+  CREDIT_SALE
+  PAYMENT
+  ADJUSTMENT
+}
+
+enum StockMovementType {
+  RECEIPT
+  SALE
+  ADJUSTMENT
+  TRANSFER
+  LOSS
+}
+
+enum SaleItemType {
+  FUEL
+  PRODUCT
+}
+
+enum SaleStatus {
+  COMPLETED
+  VOIDED
+  REFUNDED
+}
+
+enum FuelSaleMode {
+  PREPAY
+  POSTPAY
+}
+
+enum ShiftStatus {
+  PENDING_OPEN // ээлж эхлүүлэх хүсэлт — нягтлан/админ батлахыг хүлээж буй
+  OPEN // батлагдсан, идэвхтэй
+  PENDING_CLOSE // ээлж хаах хүсэлт — батлахыг хүлээж буй
+  CLOSED
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum FuelDeliveryStatus {
+  PENDING
+  RECEIVED
+  CANCELLED
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+  CONFLICT
+}
+
+enum ReceiptCustomerType {
+  INDIVIDUAL
+  ORGANIZATION
+}
+
+// ─────────────────────────────────────────────────────────────
+// Байгууллага ба салбар
+// ─────────────────────────────────────────────────────────────
+
+model Company {
+  id             String    @id @default(cuid())
+  name           String
+  registrationNo String?   @map("registration_no")
+  taxNumber      String?   @map("tax_number") // ТТД (TIN) — И-баримтад
+  address        String?
+  phone          String?
+  settings       Json?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  stations      Station[]
+  employees     Employee[]
+  products      Product[]
+  productGroups ProductGroup[]
+  suppliers     Supplier[]
+  customers     Customer[]
+
+  @@map("company")
+}
+
+model Station {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  code      String // салбарын код, компани дотор unique
+  name      String
+  address   String?
+  latitude  Float?
+  longitude Float?
+  timezone  String  @default("Asia/Ulaanbaatar")
+  isActive  Boolean @default(true) @map("is_active")
+  settings  Json?
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company          Company               @relation(fields: [companyId], references: [id])
+  tanks            FuelTank[]
+  pumps            Pump[]
+  fuelPrices       FuelPrice[]
+  fuelDeliveries   FuelDelivery[]
+  stockLevels      StockLevel[]
+  stockMovements   StockMovement[]
+  sales            Sale[]
+  shifts           Shift[]
+  reconciliations  CashReconciliation[]
+  tankReadings     TankReading[]
+  refunds          Refund[]
+  attendances      Attendance[]
+  employeeStations EmployeeStation[]
+  employeeRoles    EmployeeRole[]
+  syncItems        SyncQueueItem[]
+  customerTxns     CustomerTransaction[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("station")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Түлш ба тоног төхөөрөмж
+// ─────────────────────────────────────────────────────────────
+
+model FuelGrade {
+  id        String        @id @default(cuid())
+  code      FuelGradeCode @unique
+  name      String
+  isActive  Boolean       @default(true) @map("is_active")
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tanks      FuelTank[]
+  nozzles    Nozzle[]
+  prices     FuelPrice[]
+  deliveries FuelDelivery[]
+  saleLines  SaleLine[]
+
+  @@map("fuel_grade")
+}
+
+model FuelTank {
+  id             String  @id @default(cuid())
+  stationId      String  @map("station_id")
+  fuelGradeId    String  @map("fuel_grade_id")
+  code           String // ж: "Tank-1"
+  capacityLiters Decimal @map("capacity_liters") @db.Decimal(14, 3)
+  currentLiters  Decimal @default(0) @map("current_liters") @db.Decimal(14, 3)
+  minLiters      Decimal @default(0) @map("min_liters") @db.Decimal(14, 3) // alert босго
+  isActive       Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  station       Station            @relation(fields: [stationId], references: [id])
+  fuelGrade     FuelGrade          @relation(fields: [fuelGradeId], references: [id])
+  nozzles       Nozzle[]
+  readings      TankReading[]
+  shiftReadings ShiftTankReading[]
+  deliveries    FuelDelivery[]
+
+  // Идэвхтэй (устгаагүй) савны код л давхцахгүй — partial unique index migration-д
+  // (устгасан савны кодыг дахин ашиглах боломжтой §2.6 soft-delete).
+  @@index([stationId])
+  @@index([stationId, code])
+  @@map("fuel_tank")
+}
+
+model Pump {
+  id        String  @id @default(cuid())
+  stationId String  @map("station_id")
+  code      String // ж: "Pump-1"
+  isActive  Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  station Station  @relation(fields: [stationId], references: [id])
+  nozzles Nozzle[]
+
+  @@unique([stationId, code])
+  @@index([stationId])
+  @@map("pump")
+}
+
+model Nozzle {
+  id           String  @id @default(cuid())
+  pumpId       String  @map("pump_id")
+  tankId       String  @map("tank_id")
+  fuelGradeId  String  @map("fuel_grade_id")
+  code         String
+  meterReading Decimal @default(0) @map("meter_reading") @db.Decimal(14, 3) // хуримтлагдсан литр
+  isActive     Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  pump          Pump                @relation(fields: [pumpId], references: [id])
+  tank          FuelTank            @relation(fields: [tankId], references: [id])
+  fuelGrade     FuelGrade           @relation(fields: [fuelGradeId], references: [id])
+  saleLines     SaleLine[]
+  meterReadings ShiftMeterReading[]
+
+  @@index([pumpId])
+  @@index([tankId])
+  @@map("nozzle")
+}
+
+/// Резервуарын түвшний цаг хугацааны бичлэг — TimescaleDB hypertable (migration).
+model TankReading {
+  id           String   @default(cuid())
+  tankId       String   @map("tank_id")
+  stationId    String   @map("station_id")
+  levelLiters  Decimal  @map("level_liters") @db.Decimal(14, 3)
+  temperatureC Decimal? @map("temperature_c") @db.Decimal(6, 2)
+  source       String   @default("manual") // manual | atg
+  recordedAt   DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tank    FuelTank @relation(fields: [tankId], references: [id])
+  station Station  @relation(fields: [stationId], references: [id])
+
+  // Hypertable-д partition key (recordedAt) primary key-д орох ёстой
+  @@id([id, recordedAt])
+  @@index([tankId, recordedAt])
+  @@index([stationId, recordedAt])
+  @@map("tank_reading")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Бараа ба нөөц
+// ─────────────────────────────────────────────────────────────
+
+model Product {
+  id         String  @id @default(cuid())
+  companyId  String  @map("company_id")
+  groupId    String? @map("group_id") // Барааны бүлэг (ProductGroup)
+  supplierId String? @map("supplier_id") // Нийлүүлэгч
+  sku        String // Барааны код
+  name       String
+  category   String? // (legacy free-text — group-аас уламжлах; fallback)
+  unit       String  @default("ш") // ш, кг, л
+  barcode    String?
+  imageUrl   String? @map("image_url") // Барааны зураг (URL)
+  priceMnt   BigInt  @map("price_mnt") // жижиглэн (нэгж) үнэ
+  costMnt    BigInt? @map("cost_mnt")
+  isVatable  Boolean @default(true) @map("is_vatable")
+  isActive   Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company        Company         @relation(fields: [companyId], references: [id])
+  group          ProductGroup?   @relation(fields: [groupId], references: [id])
+  supplier       Supplier?       @relation(fields: [supplierId], references: [id])
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+  saleLines      SaleLine[]
+
+  @@unique([companyId, sku])
+  @@index([companyId])
+  @@index([groupId])
+  @@index([supplierId])
+  @@index([barcode])
+  @@map("product")
+}
+
+/// Барааны бүлэг (категори) — компани тус бүрд (§10).
+model ProductGroup {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  name      String
+  sortOrder Int     @default(0) @map("sort_order")
+  isActive  Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  products Product[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@map("product_group")
+}
+
+model StockLevel {
+  id           String  @id @default(cuid())
+  stationId    String  @map("station_id")
+  productId    String  @map("product_id")
+  quantity     Decimal @default(0) @db.Decimal(14, 3)
+  reorderLevel Decimal @default(0) @map("reorder_level") @db.Decimal(14, 3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  station Station @relation(fields: [stationId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([stationId, productId])
+  @@index([stationId])
+  @@map("stock_level")
+}
+
+/// Нөөцийн хөдөлгөөний ledger — мөрдөгдөх чадвар (§7.2).
+model StockMovement {
+  id                String            @id @default(cuid())
+  stationId         String            @map("station_id")
+  type              StockMovementType
+  productId         String?           @map("product_id")
+  fuelTankId        String?           @map("fuel_tank_id")
+  quantity          Decimal           @db.Decimal(14, 3) // тэмдэгтэй: + орох, - гарах
+  unitCostMnt       BigInt?           @map("unit_cost_mnt")
+  reason            String? // adjustment-д заавал (§2.7)
+  actorId           String?           @map("actor_id")
+  refType           String?           @map("ref_type") // sale | delivery | transfer ...
+  refId             String?           @map("ref_id")
+  transferStationId String?           @map("transfer_station_id") // TRANSFER үед хос станц
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  station Station  @relation(fields: [stationId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([stationId, createdAt])
+  @@index([productId])
+  @@index([type])
+  @@map("stock_movement")
+}
+
+model Supplier {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  name      String
+  contact   String?
+  phone     String?
+  regNo     String? @map("reg_no")
+  isActive  Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company    Company        @relation(fields: [companyId], references: [id])
+  deliveries FuelDelivery[]
+  products   Product[]
+
+  @@index([companyId])
+  @@map("supplier")
+}
+
+model FuelDelivery {
+  id           String             @id @default(cuid())
+  stationId    String             @map("station_id")
+  supplierId   String?            @map("supplier_id")
+  fuelGradeId  String             @map("fuel_grade_id")
+  tankId       String?            @map("tank_id")
+  status       FuelDeliveryStatus @default(PENDING)
+  liters       Decimal            @db.Decimal(14, 3)
+  unitCostMnt  BigInt             @map("unit_cost_mnt") // нэгж (литр) өртөг
+  totalCostMnt BigInt             @map("total_cost_mnt")
+  documentNo   String?            @map("document_no")
+  receivedById String?            @map("received_by_id")
+  receivedAt   DateTime?          @map("received_at") @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  station   Station   @relation(fields: [stationId], references: [id])
+  supplier  Supplier? @relation(fields: [supplierId], references: [id])
+  fuelGrade FuelGrade @relation(fields: [fuelGradeId], references: [id])
+  tank      FuelTank? @relation(fields: [tankId], references: [id])
+
+  @@index([stationId, createdAt])
+  @@map("fuel_delivery")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Үнэ (түүхтэй)
+// ─────────────────────────────────────────────────────────────
+
+model FuelPrice {
+  id               String    @id @default(cuid())
+  stationId        String    @map("station_id")
+  fuelGradeId      String    @map("fuel_grade_id")
+  pricePerLiterMnt BigInt    @map("price_per_liter_mnt")
+  effectiveFrom    DateTime  @map("effective_from") @db.Timestamptz(6)
+  effectiveTo      DateTime? @map("effective_to") @db.Timestamptz(6) // null = одоо идэвхтэй
+  createdById      String?   @map("created_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  station   Station   @relation(fields: [stationId], references: [id])
+  fuelGrade FuelGrade @relation(fields: [fuelGradeId], references: [id])
+
+  @@index([stationId, fuelGradeId, effectiveFrom])
+  @@map("fuel_price")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Борлуулалт
+// ─────────────────────────────────────────────────────────────
+
+model Sale {
+  id                String               @id @default(cuid())
+  stationId         String               @map("station_id")
+  shiftId           String               @map("shift_id")
+  cashierId         String               @map("cashier_id") // Employee.id
+  status            SaleStatus           @default(COMPLETED)
+  saleNumber        String?              @map("sale_number") // салбар доторх дугаар
+  subtotalMnt       BigInt               @map("subtotal_mnt")
+  vatMnt            BigInt               @default(0) @map("vat_mnt")
+  totalMnt          BigInt               @map("total_mnt")
+  customerType      ReceiptCustomerType? @map("customer_type")
+  customerTin       String?              @map("customer_tin") // байгууллагын ТТД
+  customerId        String?              @map("customer_id") // зээлийн борлуулалтын харилцагч
+  ebarimtId         String?              @map("ebarimt_id") // И-баримт буусны дараа
+  ebarimtQr         String?              @map("ebarimt_qr")
+  clientGeneratedId String               @unique @map("client_generated_id") // idempotency §9
+  soldAt            DateTime             @default(now()) @map("sold_at") @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  station  Station    @relation(fields: [stationId], references: [id])
+  shift    Shift      @relation(fields: [shiftId], references: [id])
+  customer Customer?  @relation(fields: [customerId], references: [id])
+  lines    SaleLine[]
+  payments Payment[]
+  refunds  Refund[]
+
+  @@index([stationId, soldAt])
+  @@index([shiftId])
+  @@index([cashierId])
+  @@index([customerId])
+  @@map("sale")
+}
+
+model SaleLine {
+  id           String       @id @default(cuid())
+  saleId       String       @map("sale_id")
+  type         SaleItemType
+  productId    String?      @map("product_id")
+  fuelGradeId  String?      @map("fuel_grade_id")
+  nozzleId     String?      @map("nozzle_id")
+  description  String
+  quantity     Decimal      @db.Decimal(14, 3)
+  unitPriceMnt BigInt       @map("unit_price_mnt")
+  lineTotalMnt BigInt       @map("line_total_mnt")
+  vatMnt       BigInt       @default(0) @map("vat_mnt")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     Product?     @relation(fields: [productId], references: [id])
+  fuelGrade   FuelGrade?   @relation(fields: [fuelGradeId], references: [id])
+  nozzle      Nozzle?      @relation(fields: [nozzleId], references: [id])
+  refundItems RefundItem[]
+
+  @@index([saleId])
+  @@map("sale_line")
+}
+
+model Payment {
+  id        String        @id @default(cuid())
+  saleId    String        @map("sale_id")
+  method    PaymentMethod
+  amountMnt BigInt        @map("amount_mnt")
+  maskedPan String?       @map("masked_pan") // ЗӨВХӨН masked (****1234) — §2.5
+  reference String? // гүйлгээний лавлагаа (эмзэг биш)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@map("payment")
+}
+
+model Refund {
+  id           String  @id @default(cuid())
+  saleId       String  @map("sale_id")
+  stationId    String  @map("station_id")
+  shiftId      String? @map("shift_id") // буцаалт хийгдсэн ээлж (бэлэн мөнгөний тооцоонд)
+  amountMnt    BigInt  @map("amount_mnt") // нийт = lines нийлбэр
+  reason       String // §2.7
+  actorId      String  @map("actor_id")
+  approvedById String? @map("approved_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sale    Sale         @relation(fields: [saleId], references: [id])
+  station Station      @relation(fields: [stationId], references: [id])
+  shift   Shift?       @relation(fields: [shiftId], references: [id])
+  lines   RefundLine[]
+  items   RefundItem[]
+
+  @@index([saleId])
+  @@index([stationId, createdAt])
+  @@index([shiftId])
+  @@map("refund")
+}
+
+// Буцаалтын бараа/түлшний мөр — нөөц СЭРГЭЭХ нэгж (§7.1 "буцаалтад үлдэгдэл нэмэгдэнэ").
+// RefundLine (төлбөрийн хэлбэр) нь мөнгийг ХЭРХЭН буцаахыг, RefundItem нь ЮУГ (бараа/литр)
+// буцааж нөөцөд нэмэхийг илэрхийлнэ. Хэсэгчилсэн буцаалтад мөр тус бүрийн үлдэгдэл
+// тоо хэмжээгээр давхар сэргээхийг хорино (original qty − өмнө буцаасан).
+model RefundItem {
+  id          String   @id @default(cuid())
+  refundId    String   @map("refund_id")
+  saleLineId  String   @map("sale_line_id")
+  type        SaleItemType
+  productId   String?  @map("product_id")
+  fuelTankId  String?  @map("fuel_tank_id") // түлш буцаахад сэргээсэн сав
+  fuelGradeId String?  @map("fuel_grade_id")
+  quantity    Decimal  @db.Decimal(14, 3) // буцаасан тоо хэмжээ (эерэг)
+  amountMnt   BigInt   @map("amount_mnt") // мөрийн буцаалтын дүн (НӨАТ багтсан)
+  vatMnt      BigInt   @default(0) @map("vat_mnt")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  refund   Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  saleLine SaleLine @relation(fields: [saleLineId], references: [id])
+
+  @@index([refundId])
+  @@index([saleLineId])
+  @@map("refund_item")
+}
+
+// Буцаалтын мөр — төлбөрийн хэлбэр бүрээр (split-tender буцаалт §7.3).
+// Бэлэн мөнгөний тооцоо нь зөвхөн CASH мөрийг нэгтгэдэг тул хэлбэр бүрийн
+// буцаалт зөв (бэлэн касс хэт татагдахаас сэргийлнэ).
+model RefundLine {
+  id        String        @id @default(cuid())
+  refundId  String        @map("refund_id")
+  method    PaymentMethod
+  amountMnt BigInt        @map("amount_mnt")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  refund Refund @relation(fields: [refundId], references: [id], onDelete: Cascade)
+
+  @@index([refundId])
+  @@index([method])
+  @@map("refund_line")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Ажилтан ба ээлж
+// ─────────────────────────────────────────────────────────────
+
+model Employee {
+  id           String         @id @default(cuid())
+  companyId    String         @map("company_id")
+  firstName    String         @map("first_name")
+  lastName     String         @map("last_name")
+  employeeCode String?        @map("employee_code")
+  phone        String?
+  email        String?
+  address      String?
+  status       EmployeeStatus @default(ACTIVE)
+  hiredAt      DateTime?      @map("hired_at") @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company     Company           @relation(fields: [companyId], references: [id])
+  user        User?
+  roles       EmployeeRole[]
+  stations    EmployeeStation[]
+  attendances Attendance[]
+  shiftLinks  ShiftCashier[]
+
+  @@index([companyId])
+  @@map("employee")
+}
+
+model Role {
+  id       String  @id @default(cuid())
+  key      String  @unique // RoleKey: CASHIER ... OWNER
+  name     String
+  isSystem Boolean @default(false) @map("is_system")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  permissions RolePermission[]
+  employees   EmployeeRole[]
+
+  @@map("role")
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  key         String  @unique // ж: "pos.sell", "inventory.adjust"
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permission")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permission")
+}
+
+/// Ажилтан × role (салбараар scope хийж болно — §11). stationId null = бүх салбар.
+model EmployeeRole {
+  id         String  @id @default(cuid())
+  employeeId String  @map("employee_id")
+  roleId     String  @map("role_id")
+  stationId  String? @map("station_id")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  role     Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  station  Station? @relation(fields: [stationId], references: [id])
+
+  // Тэмдэглэл: stationId NULL үед Postgres unique-ийг хэрэгжүүлэхгүй (NULL != NULL).
+  // Компани-түвшний (stationId=NULL) role давхцлыг migration-д partial index-ээр хорино.
+  @@unique([employeeId, roleId, stationId])
+  @@index([employeeId])
+  @@map("employee_role")
+}
+
+/// Ажилтны хандах эрхтэй салбарууд — §10.
+model EmployeeStation {
+  employeeId String @map("employee_id")
+  stationId  String @map("station_id")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  station  Station  @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@id([employeeId, stationId])
+  @@map("employee_station")
+}
+
+model Shift {
+  id                 String      @id @default(cuid())
+  stationId          String      @map("station_id")
+  status             ShiftStatus @default(PENDING_OPEN)
+  openedById         String      @map("opened_by_id") // хүсэлт илгээсэн кассчин
+  openApprovedById   String?     @map("open_approved_by_id") // нээлтийг баталсан (нягтлан/админ)
+  closeRequestedById String?     @map("close_requested_by_id") // хаах хүсэлт илгээсэн кассчин
+  closedById         String?     @map("closed_by_id") // хаалтыг баталсан
+  openingCashMnt     BigInt      @default(0) @map("opening_cash_mnt")
+  closingCashMnt     BigInt?     @map("closing_cash_mnt")
+  expectedCashMnt    BigInt?     @map("expected_cash_mnt")
+  note               String?
+  openedAt           DateTime    @default(now()) @map("opened_at") @db.Timestamptz(6)
+  openApprovedAt     DateTime?   @map("open_approved_at") @db.Timestamptz(6)
+  closeRequestedAt   DateTime?   @map("close_requested_at") @db.Timestamptz(6)
+  closedAt           DateTime?   @map("closed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  station        Station             @relation(fields: [stationId], references: [id])
+  sales          Sale[]
+  cashiers       ShiftCashier[]
+  meterReadings  ShiftMeterReading[]
+  tankReadings   ShiftTankReading[]
+  tenders        ShiftTender[]
+  reconciliation CashReconciliation?
+  refunds        Refund[]
+
+  @@index([stationId, openedAt])
+  @@index([status])
+  @@map("shift")
+}
+
+/// Ээлж нээх/хаах үед савны түлшний хэмжээ (шугаман төмрөөр см) + баталгаажуулах зураг (§7.3).
+model ShiftTankReading {
+  id          String   @id @default(cuid())
+  shiftId     String   @map("shift_id")
+  fuelTankId  String   @map("fuel_tank_id")
+  phase       String // OPEN | CLOSE
+  centimeters Decimal  @db.Decimal(8, 2) // шугаман төмрөөр хэмжсэн см
+  liters      Decimal? @db.Decimal(14, 3) // см → литр (заавал биш)
+  imageUrl    String?  @map("image_url") // баталгаажуулах зураг (data URL)
+  actorId     String   @map("actor_id")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  shift    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  fuelTank FuelTank @relation(fields: [fuelTankId], references: [id])
+
+  @@index([shiftId])
+  @@map("shift_tank_reading")
+}
+
+/// Ээлж хаах үед төлбөрийн хэлбэр тус бүрээр тушаасан дүн vs тооцоо (§7.3 нягтлан тулгалт).
+model ShiftTender {
+  id          String        @id @default(cuid())
+  shiftId     String        @map("shift_id")
+  method      PaymentMethod
+  declaredMnt BigInt        @map("declared_mnt") // ажилтны тушаасан
+  expectedMnt BigInt        @map("expected_mnt") // системийн тооцоо
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  shift Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftId, method])
+  @@index([shiftId])
+  @@map("shift_tender")
+}
+
+model ShiftCashier {
+  shiftId    String @map("shift_id")
+  employeeId String @map("employee_id")
+
+  shift    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@id([shiftId, employeeId])
+  @@map("shift_cashier")
+}
+
+/// Ээлж нээх/хаах үеийн тоолуурын утга — §7.3.
+model ShiftMeterReading {
+  id           String   @id @default(cuid())
+  shiftId      String   @map("shift_id")
+  nozzleId     String   @map("nozzle_id")
+  openingMeter Decimal  @map("opening_meter") @db.Decimal(14, 3)
+  closingMeter Decimal? @map("closing_meter") @db.Decimal(14, 3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  shift  Shift  @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  nozzle Nozzle @relation(fields: [nozzleId], references: [id])
+
+  @@unique([shiftId, nozzleId])
+  @@map("shift_meter_reading")
+}
+
+/// Ээлжийн бэлэн мөнгөний тооцоо — §6 CashReconciliation.
+model CashReconciliation {
+  id              String  @id @default(cuid())
+  shiftId         String  @unique @map("shift_id")
+  stationId       String  @map("station_id")
+  expectedCashMnt BigInt  @map("expected_cash_mnt") // тооцоолсон
+  countedCashMnt  BigInt  @map("counted_cash_mnt") // бодит
+  varianceMnt     BigInt  @map("variance_mnt") // зөрүү (counted - expected)
+  note            String? // §2.7 зөрүүгийн шалтгаан
+  reconciledById  String  @map("reconciled_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  shift   Shift   @relation(fields: [shiftId], references: [id])
+  station Station @relation(fields: [stationId], references: [id])
+
+  @@index([stationId, createdAt])
+  @@map("cash_reconciliation")
+}
+
+model Attendance {
+  id         String    @id @default(cuid())
+  employeeId String    @map("employee_id")
+  stationId  String    @map("station_id")
+  clockIn    DateTime  @map("clock_in") @db.Timestamptz(6)
+  clockOut   DateTime? @map("clock_out") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  station  Station  @relation(fields: [stationId], references: [id])
+
+  @@index([employeeId])
+  @@index([stationId, clockIn])
+  @@map("attendance")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Систем
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  employeeId   String    @unique @map("employee_id")
+  username     String    @unique
+  passwordHash String    @map("password_hash") // argon2 — §11
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("user")
+}
+
+/// АУДИТ — APPEND-ONLY (§2.4, §8). Migration-д UPDATE/DELETE-ийг trigger-ээр хорино.
+model AuditLog {
+  id            String   @id @default(cuid())
+  actorId       String?  @map("actor_id")
+  action        String
+  entity        String
+  entityId      String?  @map("entity_id")
+  before        Json?
+  after         Json?
+  stationId     String?  @map("station_id")
+  ip            String?
+  correlationId String?  @map("correlation_id")
+  at            DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([entity, entityId])
+  @@index([stationId, at])
+  @@index([actorId, at])
+  @@map("audit_log")
+}
+
+/// Offline үед үүссэн, sync хүлээж буй үйлдэл — §9.
+model SyncQueueItem {
+  id                String     @id @default(cuid())
+  stationId         String     @map("station_id")
+  clientGeneratedId String     @unique @map("client_generated_id") // idempotency
+  deviceId          String?    @map("device_id")
+  operation         String // ж: "sale.create"
+  payload           Json
+  status            SyncStatus @default(PENDING)
+  attempts          Int        @default(0)
+  lastError         String?    @map("last_error")
+  conflict          Json?
+  clientCreatedAt   DateTime   @map("client_created_at") @db.Timestamptz(6)
+  receivedAt        DateTime   @default(now()) @map("received_at") @db.Timestamptz(6)
+  processedAt       DateTime?  @map("processed_at") @db.Timestamptz(6)
+
+  station Station @relation(fields: [stationId], references: [id])
+
+  @@index([stationId, status])
+  @@index([status])
+  @@map("sync_queue_item")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Харилцагч ба зээл/авлага (company-scoped, бүх салбарт зээлээр авна)
+// ─────────────────────────────────────────────────────────────
+
+/// Харилцагч — компанид харьяалагдана. balanceMnt: + = авлага (бидэнд өртэй),
+/// - = өглөг/урьдчилгаа (бид өртэй). creditLimitMnt: 0 = лимитгүй.
+model Customer {
+  id             String  @id @default(cuid())
+  companyId      String  @map("company_id")
+  code           String?
+  name           String
+  phone          String?
+  email          String?
+  regNo          String? @map("reg_no") // ТТД/регистр
+  address        String?
+  creditLimitMnt BigInt  @default(0) @map("credit_limit_mnt")
+  balanceMnt     BigInt  @default(0) @map("balance_mnt") // running авлага (+) / өглөг (-)
+  isActive       Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company      Company               @relation(fields: [companyId], references: [id])
+  transactions CustomerTransaction[]
+  sales        Sale[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("customer")
+}
+
+/// Харилцагчийн тооцооны дэвтэр (subledger) — append, running balance.
+model CustomerTransaction {
+  id              String          @id @default(cuid())
+  customerId      String          @map("customer_id")
+  stationId       String?         @map("station_id") // үйлдэл хийгдсэн салбар
+  type            CustomerTxnType
+  amountMnt       BigInt          @map("amount_mnt") // тэмдэгтэй дельта: + авлага нэмэх, - барагдуулах
+  balanceAfterMnt BigInt          @map("balance_after_mnt") // тухайн үеийн үлдэгдэл
+  saleId          String?         @map("sale_id") // CREDIT_SALE үед
+  method          PaymentMethod? // PAYMENT үед (cash/card...)
+  reason          String? // ADJUSTMENT үед заавал (§2.7)
+  actorId         String          @map("actor_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  customer Customer @relation(fields: [customerId], references: [id])
+  station  Station? @relation(fields: [stationId], references: [id])
+
+  @@index([customerId, createdAt])
+  @@index([stationId, createdAt])
+  @@map("customer_transaction")
+}

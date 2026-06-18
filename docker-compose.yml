@@ -1,0 +1,60 @@
+# Дэд бүтэц: PostgreSQL(+TimescaleDB), Redis, Loki, Grafana
+# CLAUDE.md §3, §8 — мөнгө/нөөцийн ACID + төвлөрсөн лог
+services:
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: fuel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fuel
+      POSTGRES_PASSWORD: fuel
+      POSTGRES_DB: fuel
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fuel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fuel-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: fuel-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: fuel-grafana
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3001:3000"
+    depends_on:
+      - loki
+
+volumes:
+  pgdata:
+  redisdata:
