@@ -61,7 +61,7 @@ services:
       - key: JWT_REFRESH_TTL
         value: 30d
       - key: CORS_ORIGINS
-        sync: false # ← Apply дараа fuel-web-ийн https URL-ийг оруулна
+        value: https://fuel-web-7rdb.onrender.com # web-ийн жинхэнэ URL (Render суффикстэй)
 
   # ── Web (Next.js PWA) ──
   - type: web
@@ -76,4 +76,4 @@ services:
       - key: NODE_VERSION
         value: "20"
       - key: NEXT_PUBLIC_API_URL
-        sync: false # ← Apply дараа fuel-api-ийн https URL-ийг оруулаад web-ийг ДАХИН deploy (build-time)
+        value: https://fuel-api-q3fi.onrender.com # api-ийн жинхэнэ URL; build-д шигдэнэ (өөрчилбөл web дахин deploy)
