@@ -33,7 +33,9 @@ services:
     plan: free
     region: singapore
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @fuel/api exec prisma generate && pnpm exec turbo run build --filter=@fuel/api
+    # NODE_ENV=development нь install үед devDependencies (prisma, @nestjs/cli, turbo, tsx…)-ийг
+    # суулгуулна (service NODE_ENV=production тул pnpm devDeps-ийг алгасахаас сэргийлнэ). Build/runtime production хэвээр.
+    buildCommand: corepack enable && NODE_ENV=development pnpm install --frozen-lockfile && pnpm --filter @fuel/api exec prisma generate && pnpm exec turbo run build --filter=@fuel/api
     startCommand: pnpm --filter @fuel/api exec prisma migrate deploy && (pnpm db:seed || true) && node apps/api/dist/main.js
     healthCheckPath: /api/health
     envVars:
@@ -68,7 +70,7 @@ services:
     plan: free
     region: singapore
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec turbo run build --filter=@fuel/web
+    buildCommand: corepack enable && NODE_ENV=development pnpm install --frozen-lockfile && pnpm exec turbo run build --filter=@fuel/web
     startCommand: pnpm --filter @fuel/web exec next start -p $PORT -H 0.0.0.0
     envVars:
       - key: NODE_VERSION
