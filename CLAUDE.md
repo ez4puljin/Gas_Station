@@ -442,11 +442,21 @@ pnpm format
 
 ### 17.2 Локалаар ажиллуулах (энэ машин дээр)
 
-- Docker Desktop унтарсан тул **локал PostgreSQL 17** ашигладаг (docker-compose биш).
-  superuser `postgres/postgres`; апп DB/role `fuel/fuel`, database `fuel` (:5432).
-- **Redis = Memurai** (Windows локал Redis, :6379, auto-start). Login/refresh/throttle ажиллана.
+- Docker Desktop унтарсан тул **локал PostgreSQL** ашигладаг (docker-compose биш). Энэ машинд
+  **хоёр instance**: **PostgreSQL 18 → :5432 (апп үүнийг хэрэглэнэ)**, PostgreSQL 16 → :5433.
+  superuser `postgres/postgres`; апп DB/role `fuel/fuel`, database `fuel` нь **:5432 (PG18)** дээр.
+  Олон instance тул install.bat нь role/db-г `-p 5432`-д тулгаж үүсгэж, `fuel:fuel` нэвтрэлтийг
+  баталгаажуулдаг (DATABASE_URL-ийн порттой таарах ёстой).
+- **Redis (:6379)** — энэ машинд **Memurai суугаагүй**. `install.bat` нь Memurai байхгүй үед
+  **портабл Redis (tporadowski v5.0.14.1)**-ийг `tools/redis/`-д (gitignore-д) татаж аваад асаадаг.
+  start.bat нь дараалал: Memurai service → `tools/redis/redis-server.exe` → docker. Redis-гүйгээр
+  login/refresh/throttle ажиллахгүй.
+- **`install.bat`** (repo root, ASCII/CRLF) — **бүрэн автомат** нэг удаагийн суулгац: Node шалгах →
+  pnpm байхгүй бол corepack, түүнгүй бол `npm i -g pnpm@9.15.9` өөрөө суулгана → .env → deps+build →
+  Postgres `fuel` role/db → **Redis суулгаж асаана** → `migrate deploy` → `db:seed`. Төгсгөлд бүх
+  бүрэлдэхүүний статус (Node/pnpm/DB/Redis) харуулна; Redis босоогүй бол тодорхой анхааруулна.
 - **`start.bat`** (repo root, ASCII/CRLF) — port 3000/4000 + `*Desktop\gas station*` node-ийг унтрааж,
-  Postgres/Redis эсэхийг шалгаад `db:generate` + `prisma migrate deploy` + `db:seed` хийж `pnpm dev` асаана.
+  Postgres service + Redis эсэхийг шалгаж асаагаад `db:generate` + `prisma migrate deploy` хийж `pnpm dev` асаана.
 - TimescaleDB локалд байхгүй → `tank_reading` hypertable migration **алгасна** (энгийн хүснэгт).
 - Env байршил: `apps/api/.env` (API+Prisma), `apps/web/.env.local` (NEXT_PUBLIC_*).
 - DB бэлдэх: `pnpm db:migrate` (dev) эсвэл prod-д `prisma migrate deploy`; `pnpm db:seed`.
@@ -524,8 +534,12 @@ pnpm format
   сүүлчийн balanceAfterMnt-тай тэнцэнэ). Бүх балансын өөрчлөлт CustomerTransaction-аар явдаг тул дэвтэр
   бүрэн — seed-д шууд balanceMnt тавьсан тохиолдол л зөрж болзошгүй.
 - **Shell-ийн өргөн (ил бус):** AppShell-ийн контент багана `flex flex-col` тул хуудасны `<main
-  className="mx-auto max-w-…">` нь өргөн дэлгэцэнд **контентоороо агшиж** голдоо төвлөрдөг (auto margin).
-  Бүх өргөнийг дүүргэхэд `w-full` нэм (ж: admin = `mx-auto w-full max-w-[1700px]`). `StationDto`-д
+  className="mx-auto max-w-…">` нь `w-full`-гүй бол өргөн дэлгэцэнд **контентоороо агшиж** голдоо
+  төвлөрдөг (auto margin нь `align-items:stretch`-ийг дардаг). **Тиймээс бүх хуудасны контент `<main>`
+  заавал `w-full`-тэй байна.** Конвенц: **апп/модул хуудас** (`/`, `/pos`, `/customers`, `/inventory`,
+  `/materials`, `/finance`, `/control`, `/staff`(1600), `/admin`, `/sales-history`) = `mx-auto w-full
+  max-w-[1700px]` (дэлгэц дүүргэнэ); **тайлан** (`/reports` + `/reports/*`) = `mx-auto w-full max-w-6xl`
+  (баримт өргөн). Loader (`grid place-items-center`) main-д max-w/w-full хэрэггүй. `StationDto`-д
   `address` нэмсэн (`/stations` аль хэдийн буцаадаг). Admin-ийн салбарын мөр = Нэр/Хаяг/ажилтны тоо
   (employees-ээс)/зарагддаг түлш (салбар бүрийн tank-ийн грейд, `reload`-д урьдчилан татна); мөр дарж
   резервуар жагсаалт нээнэ.

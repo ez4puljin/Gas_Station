@@ -42,3 +42,7 @@ Thumbs.db
 
 # Misc
 *.local
+
+# Bundled portable Redis (downloaded by install.bat) + its snapshot
+tools/redis/
+*.rdb
