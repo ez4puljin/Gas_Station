@@ -137,7 +137,7 @@ export default function InventoryPage() {
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6">
+    <main className="mx-auto w-full max-w-[1700px] px-4 py-6 lg:px-8">
       <PageHeader icon={Warehouse} title="Нөөц / Агуулах" subtitle="Резервуар, бараа, нийлүүлэлт, тооллого">
         <select
           value={stationId}

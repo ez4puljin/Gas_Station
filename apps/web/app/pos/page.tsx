@@ -465,7 +465,7 @@ export default function PosPage() {
     payTab === 'CASH' && single && toBig(single.tendered) > total ? toBig(single.tendered) - total : 0n;
 
   return (
-    <main className="mx-auto max-w-7xl px-3 py-4 sm:px-5">
+    <main className="mx-auto w-full max-w-[1700px] px-3 py-4 sm:px-5 lg:px-6">
       {/* Толгой */}
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">

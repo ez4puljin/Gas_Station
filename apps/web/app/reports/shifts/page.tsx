@@ -150,7 +150,7 @@ export default function ShiftsReportPage() {
   if (!ready) return <main className="grid min-h-screen place-items-center text-muted-foreground">Ачаалж байна…</main>;
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6">
+    <main className="mx-auto w-full max-w-6xl px-4 py-6">
       <div className="no-print">
         <BackLink href="/reports" />
         <header className="mb-5 flex items-center gap-3">

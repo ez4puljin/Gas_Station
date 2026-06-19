@@ -89,7 +89,7 @@ export default function DashboardPage() {
     stations.map((s) => ({ station: s, shift: null, salesCount: 0, todayGrossMnt: '0', byMethod: {} }));
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6 sm:py-8">
+    <main className="mx-auto w-full max-w-[1700px] px-4 py-6 sm:py-8 lg:px-8">
       {/* Мэндчилгээ */}
       <div className="mb-7">
         <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">Сайн байна уу, {firstName}!</h2>

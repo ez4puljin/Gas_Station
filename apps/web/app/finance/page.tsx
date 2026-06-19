@@ -91,7 +91,7 @@ export default function FinancePage() {
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6">
+    <main className="mx-auto w-full max-w-[1700px] px-4 py-6 lg:px-8">
       <PageHeader icon={BarChart3} title="Санхүү / Самбар" subtitle="Өдрийн борлуулалт, KPI, аномали">
         <input
           type="date"
