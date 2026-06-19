@@ -1,0 +1,77 @@
+# Render Blueprint — Шатахуун ERP (бүх стек нэг дор)
+# Deploy: Render Dashboard → New → Blueprint → энэ GitHub репог сонгож "Apply".
+#   • fuel-db    : PostgreSQL (FREE — ⚠️ 30 хоногийн дараа устана; дараа нь paid болгох/нөөцлөх)
+#   • fuel-redis : Key Value (Redis нийцтэй, FREE 25MB)
+#   • fuel-api   : NestJS API (байнгын + Socket.IO realtime)
+#   • fuel-web   : Next.js PWA
+#
+# Apply хийсний ДАРАА (URL-ууд үүссэний дараа) 2 env-ийг бөглөж дахин deploy хийнэ:
+#   1) fuel-api  → CORS_ORIGINS      = https://<fuel-web-ийн URL>
+#   2) fuel-web  → NEXT_PUBLIC_API_URL = https://<fuel-api-ийн URL>   (build-time тул web-ийг дахин deploy)
+
+databases:
+  - name: fuel-db
+    plan: free
+    region: singapore
+    databaseName: fuel
+    user: fuel
+
+services:
+  # ── Redis / Key Value ──
+  # Тэмдэглэл: schema validation алдвал `type: keyvalue`-ийг `type: redis` болгож үзнэ.
+  - type: keyvalue
+    name: fuel-redis
+    plan: free
+    region: singapore
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: [] # зөвхөн дотоод (Render доторх сервисээс)
+
+  # ── API (NestJS + Prisma + Socket.IO) ──
+  - type: web
+    name: fuel-api
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @fuel/api exec prisma generate && pnpm exec turbo run build --filter=@fuel/api
+    startCommand: pnpm --filter @fuel/api exec prisma migrate deploy && (pnpm db:seed || true) && node apps/api/dist/main.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fuel-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: fuel-redis
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL
+        value: 30d
+      - key: CORS_ORIGINS
+        sync: false # ← Apply дараа fuel-web-ийн https URL-ийг оруулна
+
+  # ── Web (Next.js PWA) ──
+  - type: web
+    name: fuel-web
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec turbo run build --filter=@fuel/web
+    startCommand: pnpm --filter @fuel/web exec next start -p $PORT -H 0.0.0.0
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_API_URL
+        sync: false # ← Apply дараа fuel-api-ийн https URL-ийг оруулаад web-ийг ДАХИН deploy (build-time)

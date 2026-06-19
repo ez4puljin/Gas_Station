@@ -36,8 +36,9 @@ async function bootstrap(): Promise<void> {
   // Graceful shutdown (Prisma/Redis disconnect)
   app.enableShutdownHooks();
 
-  const port = config.getOrThrow<number>('API_PORT');
-  await app.listen(port);
+  // Render/Railway зэрэг host нь PORT-ыг inject хийдэг тул түүнийг эхэнд авна (эс бөгөөс API_PORT).
+  const port = process.env.PORT ? Number(process.env.PORT) : config.getOrThrow<number>('API_PORT');
+  await app.listen(port, '0.0.0.0');
 
   const logger = app.get(PinoLogger);
   logger.log(`API асав: http://localhost:${port}/api`);
