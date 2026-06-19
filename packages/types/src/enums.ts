@@ -55,6 +55,34 @@ export const CUSTOMER_TXN_LABEL: Record<CustomerTxnType, string> = {
   ADJUSTMENT: 'Засвар',
 };
 
+/** Нийлүүлэгчийн тооцооны гүйлгээ (өглөг / AP дэвтэр) */
+export const SupplierTxnType = {
+  RECEIPT: 'RECEIPT', // бараа/түлш хүлээн авах → өглөг нэмэгдэнэ
+  PAYMENT: 'PAYMENT', // нийлүүлэгчид төлөх → өглөг хорогдоно
+  ADJUSTMENT: 'ADJUSTMENT', // гар засвар (reason + actor)
+} as const;
+export type SupplierTxnType = (typeof SupplierTxnType)[keyof typeof SupplierTxnType];
+
+export const SUPPLIER_TXN_LABEL: Record<SupplierTxnType, string> = {
+  RECEIPT: 'Хүлээн авалт',
+  PAYMENT: 'Төлбөр',
+  ADJUSTMENT: 'Засвар',
+};
+
+/** Худалдан авалтын (нийлүүлэлт) мөрийн төлөв */
+export const PurchaseLineStatus = {
+  PENDING: 'PENDING', // хүлээгдэж буй (бараа ирээгүй)
+  RECEIVED: 'RECEIVED', // хүлээн авсан (нөөц/саванд орсон)
+  CANCELLED: 'CANCELLED',
+} as const;
+export type PurchaseLineStatus = (typeof PurchaseLineStatus)[keyof typeof PurchaseLineStatus];
+
+export const PURCHASE_LINE_STATUS_LABEL: Record<PurchaseLineStatus, string> = {
+  PENDING: 'Хүлээгдэж буй',
+  RECEIVED: 'Хүлээн авсан',
+  CANCELLED: 'Цуцалсан',
+};
+
 /** Нөөцийн хөдөлгөөний төрөл — CLAUDE.md §6 StockMovement */
 export const StockMovementType = {
   RECEIPT: 'RECEIPT', // нийлүүлэлт хүлээн авах
@@ -174,6 +202,11 @@ export const AuditAction = {
   PERMISSION_CHANGE: 'PERMISSION_CHANGE',
   CUSTOMER_PAYMENT: 'CUSTOMER_PAYMENT',
   CUSTOMER_ADJUST: 'CUSTOMER_ADJUST',
+  PURCHASE_CREATE: 'PURCHASE_CREATE',
+  PURCHASE_RECEIVE: 'PURCHASE_RECEIVE',
+  PURCHASE_CANCEL: 'PURCHASE_CANCEL',
+  SUPPLIER_PAYMENT: 'SUPPLIER_PAYMENT',
+  SUPPLIER_ADJUST: 'SUPPLIER_ADJUST',
   LOGIN: 'LOGIN',
   LOGOUT: 'LOGOUT',
 } as const;

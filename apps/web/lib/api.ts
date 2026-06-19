@@ -1,4 +1,5 @@
 import type { ApiError } from '@fuel/types';
+import { invalidateCache } from './request-cache';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -17,10 +18,12 @@ export const tokenStore = {
   set(access: string, refresh: string): void {
     window.localStorage.setItem(ACCESS_TOKEN_KEY, access);
     window.localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
+    invalidateCache(); // өөр хэрэглэгч рүү шилжихэд хуучин auth-scoped кэш үлдэхгүй
   },
   clear(): void {
     window.localStorage.removeItem(ACCESS_TOKEN_KEY);
     window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    invalidateCache();
   },
 };
 

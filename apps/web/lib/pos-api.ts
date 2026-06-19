@@ -1,5 +1,6 @@
 import type { PaymentMethod } from '@fuel/types';
 import { apiFetch } from './api';
+import { cachedFetch } from './request-cache';
 
 export interface StationDto {
   id: string;
@@ -145,7 +146,8 @@ function listQs(f: SalesListFilters): string {
 }
 
 export const posApi = {
-  stations: () => apiFetch<StationDto[]>('/stations'),
+  // Салбарууд тогтвортой бөгөөд 16 хуудаснаас дуудагддаг тул кэшлэнэ (admin CRUD-д invalidate).
+  stations: () => cachedFetch('stations', () => apiFetch<StationDto[]>('/stations')),
   catalog: (stationId: string) =>
     apiFetch<CatalogDto>(`/pos/catalog?stationId=${encodeURIComponent(stationId)}`),
   currentShift: (stationId: string) =>

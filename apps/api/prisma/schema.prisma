@@ -42,6 +42,18 @@ enum CustomerTxnType {
   ADJUSTMENT
 }
 
+enum SupplierTxnType {
+  RECEIPT
+  PAYMENT
+  ADJUSTMENT
+}
+
+enum PurchaseLineStatus {
+  PENDING
+  RECEIVED
+  CANCELLED
+}
+
 enum StockMovementType {
   RECEIPT
   SALE
@@ -119,6 +131,7 @@ model Company {
   productGroups ProductGroup[]
   suppliers     Supplier[]
   customers     Customer[]
+  purchases     Purchase[]
 
   @@map("company")
 }
@@ -156,6 +169,7 @@ model Station {
   employeeRoles    EmployeeRole[]
   syncItems        SyncQueueItem[]
   customerTxns     CustomerTransaction[]
+  purchaseLines    PurchaseLine[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -174,11 +188,12 @@ model FuelGrade {
   createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tanks      FuelTank[]
-  nozzles    Nozzle[]
-  prices     FuelPrice[]
-  deliveries FuelDelivery[]
-  saleLines  SaleLine[]
+  tanks         FuelTank[]
+  nozzles       Nozzle[]
+  prices        FuelPrice[]
+  deliveries    FuelDelivery[]
+  saleLines     SaleLine[]
+  purchaseLines PurchaseLine[]
 
   @@map("fuel_grade")
 }
@@ -203,6 +218,7 @@ model FuelTank {
   readings      TankReading[]
   shiftReadings ShiftTankReading[]
   deliveries    FuelDelivery[]
+  purchaseLines PurchaseLine[]
 
   // Идэвхтэй (устгаагүй) савны код л давхцахгүй — partial unique index migration-д
   // (устгасан савны кодыг дахин ашиглах боломжтой §2.6 soft-delete).
@@ -304,6 +320,7 @@ model Product {
   stockLevels    StockLevel[]
   stockMovements StockMovement[]
   saleLines      SaleLine[]
+  purchaseLines  PurchaseLine[]
 
   @@unique([companyId, sku])
   @@index([companyId])
@@ -378,21 +395,25 @@ model StockMovement {
 }
 
 model Supplier {
-  id        String  @id @default(cuid())
-  companyId String  @map("company_id")
-  name      String
-  contact   String?
-  phone     String?
-  regNo     String? @map("reg_no")
-  isActive  Boolean @default(true) @map("is_active")
+  id         String  @id @default(cuid())
+  companyId  String  @map("company_id")
+  name       String
+  contact    String?
+  phone      String?
+  regNo      String? @map("reg_no")
+  isActive   Boolean @default(true) @map("is_active")
+  // Өглөг (AP): эерэг = бид нийлүүлэгчид төлөх үлдэгдэлтэй. Мөнгө = integer MNT (BigInt).
+  balanceMnt BigInt  @default(0) @map("balance_mnt")
 
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  company    Company        @relation(fields: [companyId], references: [id])
-  deliveries FuelDelivery[]
-  products   Product[]
+  company      Company               @relation(fields: [companyId], references: [id])
+  deliveries   FuelDelivery[]
+  products     Product[]
+  purchases    Purchase[]
+  transactions SupplierTransaction[]
 
   @@index([companyId])
   @@map("supplier")
@@ -557,16 +578,16 @@ model Refund {
 // буцааж нөөцөд нэмэхийг илэрхийлнэ. Хэсэгчилсэн буцаалтад мөр тус бүрийн үлдэгдэл
 // тоо хэмжээгээр давхар сэргээхийг хорино (original qty − өмнө буцаасан).
 model RefundItem {
-  id          String   @id @default(cuid())
-  refundId    String   @map("refund_id")
-  saleLineId  String   @map("sale_line_id")
+  id          String       @id @default(cuid())
+  refundId    String       @map("refund_id")
+  saleLineId  String       @map("sale_line_id")
   type        SaleItemType
-  productId   String?  @map("product_id")
-  fuelTankId  String?  @map("fuel_tank_id") // түлш буцаахад сэргээсэн сав
-  fuelGradeId String?  @map("fuel_grade_id")
-  quantity    Decimal  @db.Decimal(14, 3) // буцаасан тоо хэмжээ (эерэг)
-  amountMnt   BigInt   @map("amount_mnt") // мөрийн буцаалтын дүн (НӨАТ багтсан)
-  vatMnt      BigInt   @default(0) @map("vat_mnt")
+  productId   String?      @map("product_id")
+  fuelTankId  String?      @map("fuel_tank_id") // түлш буцаахад сэргээсэн сав
+  fuelGradeId String?      @map("fuel_grade_id")
+  quantity    Decimal      @db.Decimal(14, 3) // буцаасан тоо хэмжээ (эерэг)
+  amountMnt   BigInt       @map("amount_mnt") // мөрийн буцаалтын дүн (НӨАТ багтсан)
+  vatMnt      BigInt       @default(0) @map("vat_mnt")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
@@ -944,4 +965,97 @@ model CustomerTransaction {
   @@index([customerId, createdAt])
   @@index([stationId, createdAt])
   @@map("customer_transaction")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Худалдан авалт / нийлүүлэлт (procurement)
+// ─────────────────────────────────────────────────────────────
+
+/// Худалдан авалт (нийлүүлэлтийн баримт) — нэг нийлүүлэгчээс нэг удаа авсныг
+/// олон салбар/сав/бараа руу мөр болгон хуваарилна (ж: 25тн → 10тн C1, 15тн C2).
+model Purchase {
+  id           String  @id @default(cuid())
+  companyId    String  @map("company_id")
+  supplierId   String  @map("supplier_id")
+  purchaseNo   String? @map("purchase_no") // P-YYYY/MM/DD-0001 (компани дотор)
+  documentNo   String? @map("document_no") // нийлүүлэгчийн падаан/нэхэмжлэхийн дугаар
+  note         String?
+  totalCostMnt BigInt  @default(0) @map("total_cost_mnt") // мөрүүдийн нийт өртөг
+  createdById  String  @map("created_by_id")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company  Company        @relation(fields: [companyId], references: [id])
+  supplier Supplier       @relation(fields: [supplierId], references: [id])
+  lines    PurchaseLine[]
+
+  @@index([companyId, createdAt])
+  @@index([supplierId])
+  @@map("purchase")
+}
+
+/// Худалдан авалтын мөр — нэг салбарын нэг сав (түлш) ЭСВЭЛ нэг бараа руу орлого.
+/// PENDING → RECEIVED (салбар бүр тусдаа хүлээн авна; хүлээн авахад нөөц/сав нэмэгдэнэ).
+model PurchaseLine {
+  id         String             @id @default(cuid())
+  purchaseId String             @map("purchase_id")
+  stationId  String             @map("station_id") // орлого авах салбар
+  itemType   SaleItemType       @map("item_type") // FUEL | PRODUCT
+  status     PurchaseLineStatus @default(PENDING)
+
+  // FUEL үед заавал
+  fuelGradeId String? @map("fuel_grade_id")
+  tankId      String? @map("tank_id")
+  // PRODUCT үед заавал
+  productId   String? @map("product_id")
+  // Хэмжээ: түлш = литр, бараа = ширхэг/кг (тэмдэггүй, эерэг)
+  quantity    Decimal @db.Decimal(14, 3)
+
+  unitCostMnt  BigInt @map("unit_cost_mnt") // нэгж өртөг (литр / ширхэг)
+  totalCostMnt BigInt @map("total_cost_mnt") // мөрийн нийт өртөг
+
+  // Хүлээн авалт (RECEIVED) — мөрдөлт; үүсгэсэн лавлагаа
+  receivedById    String?   @map("received_by_id")
+  receivedAt      DateTime? @map("received_at") @db.Timestamptz(6)
+  fuelDeliveryId  String?   @map("fuel_delivery_id") // FUEL → үүссэн FuelDelivery
+  stockMovementId String?   @map("stock_movement_id") // PRODUCT → үүссэн StockMovement
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  purchase     Purchase              @relation(fields: [purchaseId], references: [id])
+  station      Station               @relation(fields: [stationId], references: [id])
+  fuelGrade    FuelGrade?            @relation(fields: [fuelGradeId], references: [id])
+  tank         FuelTank?             @relation(fields: [tankId], references: [id])
+  product      Product?              @relation(fields: [productId], references: [id])
+  supplierTxns SupplierTransaction[]
+
+  @@index([purchaseId])
+  @@index([stationId, status])
+  @@map("purchase_line")
+}
+
+/// Нийлүүлэгчийн тооцооны дэвтэр (subledger) — append, running balance (өглөг).
+/// CustomerTransaction-ийн (AR) тольдол. amountMnt тэмдэгтэй: + өглөг нэмэх, - барагдуулах.
+model SupplierTransaction {
+  id              String          @id @default(cuid())
+  supplierId      String          @map("supplier_id")
+  type            SupplierTxnType
+  amountMnt       BigInt          @map("amount_mnt") // тэмдэгтэй дельта
+  balanceAfterMnt BigInt          @map("balance_after_mnt") // тухайн үеийн үлдэгдэл
+  purchaseId      String?         @map("purchase_id") // RECEIPT үед
+  purchaseLineId  String?         @map("purchase_line_id") // RECEIPT → яг тухайн мөр (бараа drill-down)
+  method          PaymentMethod? // PAYMENT үед (cash/transfer...)
+  reason          String? // ADJUSTMENT үед заавал (§2.7)
+  actorId         String          @map("actor_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  supplier     Supplier      @relation(fields: [supplierId], references: [id])
+  purchaseLine PurchaseLine? @relation(fields: [purchaseLineId], references: [id])
+
+  @@index([supplierId, createdAt])
+  @@map("supplier_transaction")
 }

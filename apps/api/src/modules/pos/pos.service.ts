@@ -890,7 +890,13 @@ export class PosService {
     const [rows, total] = await Promise.all([
       this.prisma.sale.findMany({
         where,
-        include: { ...saleInclude, refunds: { select: { amountMnt: true } } },
+        // Жагсаалтад мөрийн өгөгдөл хэрэггүй — зөвхөн тоо. Бүх line-г ачаалахын оронд `_count`
+        // (том огнооны мужид мянга мянган мөр ачаалахаас сэргийлж хурд/payload-ыг сайжруулна).
+        include: {
+          payments: true,
+          refunds: { select: { amountMnt: true } },
+          _count: { select: { lines: true } },
+        },
         orderBy: { soldAt: 'desc' },
         skip: (q.page - 1) * q.pageSize,
         take: q.pageSize,
@@ -915,7 +921,7 @@ export class PosService {
       totalMnt: s.totalMnt,
       refundedMnt: s.refunds.reduce((sum, r) => sum + r.amountMnt, 0n),
       methods: s.payments.map((p) => ({ method: p.method, amountMnt: p.amountMnt })),
-      lineCount: s.lines.length,
+      lineCount: s._count.lines,
     }));
     return { items, page: q.page, pageSize: q.pageSize, total, totalPages: Math.ceil(total / q.pageSize) };
   }

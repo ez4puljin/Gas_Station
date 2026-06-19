@@ -9,4 +9,5 @@ export * from './inventory';
 export * from './finance';
 export * from './sync';
 export * from './customer';
+export * from './procurement';
 export * from './admin';

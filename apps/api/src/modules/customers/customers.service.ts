@@ -320,12 +320,27 @@ export class CustomersService {
       }),
     ]);
 
-    // Гүйлгээний борлуулалтын дугаар/огноог багцлан шийднэ (харагдацад).
+    // Гүйлгээний борлуулалтын дугаар/огноо + мөр (бараа/түлш)-ийг багцлан шийднэ.
+    // Мөрүүд нь тайлангийн гүйлгээ дээр double-click хийхэд харагдах бараа материал.
     const saleIds = [...new Set(rows.map((r) => r.saleId).filter((x): x is string => !!x))];
     const sales = saleIds.length
       ? await this.prisma.sale.findMany({
           where: { id: { in: saleIds } },
-          select: { id: true, saleNumber: true, soldAt: true },
+          select: {
+            id: true,
+            saleNumber: true,
+            soldAt: true,
+            lines: {
+              select: {
+                type: true,
+                description: true,
+                quantity: true,
+                unitPriceMnt: true,
+                lineTotalMnt: true,
+                product: { select: { unit: true, sku: true } },
+              },
+            },
+          },
         })
       : [];
     const saleById = new Map(sales.map((s) => [s.id, s]));
@@ -339,6 +354,15 @@ export class CustomersService {
       totalDebitMnt += debit;
       totalCreditMnt += credit;
       const sale = r.saleId ? saleById.get(r.saleId) : null;
+      const items = (sale?.lines ?? []).map((l) => ({
+        itemType: l.type,
+        name: l.description,
+        sku: l.product?.sku ?? null,
+        quantity: l.quantity.toString(),
+        unit: l.product?.unit ?? (l.type === 'FUEL' ? 'л' : ''),
+        unitCostMnt: l.unitPriceMnt,
+        totalCostMnt: l.lineTotalMnt,
+      }));
       return {
         id: r.id,
         createdAt: r.createdAt,
@@ -350,6 +374,7 @@ export class CustomersService {
         debitMnt: debit,
         creditMnt: credit,
         balanceAfterMnt: r.balanceAfterMnt,
+        items,
       };
     });
     const closingMnt = openingMnt + totalDebitMnt - totalCreditMnt;

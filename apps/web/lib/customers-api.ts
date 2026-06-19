@@ -31,6 +31,16 @@ export interface Receivables {
   customers: Customer[];
 }
 
+export interface LedgerGoodsItem {
+  itemType: 'FUEL' | 'PRODUCT';
+  name: string;
+  sku: string | null;
+  quantity: string;
+  unit: string;
+  unitCostMnt: string;
+  totalCostMnt: string;
+}
+
 export interface LedgerEntry {
   id: string;
   createdAt: string;
@@ -42,6 +52,7 @@ export interface LedgerEntry {
   debitMnt: string;
   creditMnt: string;
   balanceAfterMnt: string;
+  items: LedgerGoodsItem[];
 }
 export interface Ledger {
   from: string;

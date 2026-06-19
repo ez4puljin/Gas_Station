@@ -20,6 +20,7 @@ import { FinanceModule } from './modules/finance/finance.module';
 import { HealthModule } from './modules/health/health.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { PosModule } from './modules/pos/pos.module';
+import { ProcurementModule } from './modules/procurement/procurement.module';
 import { StaffModule } from './modules/staff/staff.module';
 import { StationsModule } from './modules/stations/stations.module';
 import { SyncModule } from './modules/sync/sync.module';
@@ -51,6 +52,7 @@ import { SyncModule } from './modules/sync/sync.module';
     FinanceModule,
     SyncModule,
     CustomersModule,
+    ProcurementModule,
     AdminModule,
   ],
   providers: [

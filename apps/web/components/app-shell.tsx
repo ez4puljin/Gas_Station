@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from
 import {
   BarChart3,
   Boxes,
+  Building2,
   ClipboardList,
   FileText,
   Fuel,
@@ -16,6 +17,7 @@ import {
   Search,
   Settings,
   ShoppingCart,
+  Truck,
   Users,
   Warehouse,
   Wallet,
@@ -52,6 +54,8 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/inventory', label: 'Нөөц / Агуулах', icon: Warehouse },
       { href: '/materials', label: 'Бараа материал', icon: Boxes },
+      { href: '/procurement', label: 'Худалдан авалт', icon: Truck },
+      { href: '/suppliers', label: 'Нийлүүлэгч / Өглөг', icon: Building2 },
     ],
   },
   {

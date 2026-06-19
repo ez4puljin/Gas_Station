@@ -1,4 +1,5 @@
 import { apiFetch } from './api';
+import { invalidateCache } from './request-cache';
 
 export interface AdminEmployee {
   id: string;
@@ -67,12 +68,22 @@ export const adminApi = {
       body: JSON.stringify({ permissionKeys }),
     }),
 
-  // Салбар (StationsModule)
-  createStation: (body: unknown) =>
-    apiFetch('/stations', { method: 'POST', body: JSON.stringify(body) }),
-  updateStation: (id: string, body: unknown) =>
-    apiFetch(`/stations/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  deleteStation: (id: string) => apiFetch(`/stations/${id}`, { method: 'DELETE' }),
+  // Салбар (StationsModule) — өөрчилсний дараа `stations` кэшийг цэвэрлэнэ (posApi.stations кэштэй).
+  createStation: async (body: unknown) => {
+    const r = await apiFetch('/stations', { method: 'POST', body: JSON.stringify(body) });
+    invalidateCache('stations');
+    return r;
+  },
+  updateStation: async (id: string, body: unknown) => {
+    const r = await apiFetch(`/stations/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    invalidateCache('stations');
+    return r;
+  },
+  deleteStation: async (id: string) => {
+    const r = await apiFetch(`/stations/${id}`, { method: 'DELETE' });
+    invalidateCache('stations');
+    return r;
+  },
 
   // Резервуар (FuelTank) + грейд
   fuelGrades: () => apiFetch<FuelGradeDto[]>('/stations/fuel-grades'),
