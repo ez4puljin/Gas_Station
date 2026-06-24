@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Fuel, Package } from 'lucide-react';
-import { formatMnt } from '@fuel/schemas';
+import { formatMnt, ledgerBalanceColumns, ledgerGrossColumns } from '@fuel/schemas';
 import { PrintableReport } from '@/components/printable-report';
 import { exportXlsx } from '@/lib/export-xlsx';
 
@@ -58,14 +58,14 @@ const toB = (s: string): bigint => {
 };
 const cell = (v: bigint): string => (v === 0n ? '' : formatMnt(v, { symbol: false }));
 
-/** raw дебет/кредитийг дансны мөн чанараар харагдах багана руу буулгана. */
+// Логик нь @fuel/schemas (ledger.ts)-д төвлөрсөн + тестлэгдсэн; энд `{d,c}` хэлбэрт буулгана.
 function grossCols(nature: 'debit' | 'credit', debit: bigint, credit: bigint): { d: bigint; c: bigint } {
-  return nature === 'debit' ? { d: debit, c: credit } : { d: credit, c: debit };
+  const r = ledgerGrossColumns(nature, debit, credit);
+  return { d: r.debit, c: r.credit };
 }
-/** Тэмдэгтэй үлдэгдлийг дебет/кредит баганад хуваана. */
 function balCols(nature: 'debit' | 'credit', bal: bigint): { d: bigint; c: bigint } {
-  if (nature === 'debit') return { d: bal > 0n ? bal : 0n, c: bal < 0n ? -bal : 0n };
-  return { d: bal < 0n ? -bal : 0n, c: bal > 0n ? bal : 0n };
+  const r = ledgerBalanceColumns(nature, bal);
+  return { d: r.debit, c: r.credit };
 }
 
 export function AccountLedgerReport(props: AccountLedgerReportProps) {

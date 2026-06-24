@@ -86,7 +86,9 @@ function derivedLiters(line: CartLine): string {
     const amount = BigInt(line.qty.replace(/\D/g, '') || '0');
     if (price <= 0n || amount <= 0n) return '';
     const milli = (amount * 1000n) / price; // литр × 1000 (доош)
-    return (Number(milli) / 1000).toFixed(2);
+    // Float ашиглахгүй (§2.1) — milli→decimal string, 2 орон хүртэл таслана.
+    const [whole, frac = ''] = milliToDecimalString(milli).split('.');
+    return `${whole}.${frac.slice(0, 2).padEnd(2, '0')}`;
   } catch {
     return '';
   }

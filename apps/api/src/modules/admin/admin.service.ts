@@ -10,7 +10,7 @@ import type {
   SetRolePermissionsInput,
   UpdateEmployeeInput,
 } from '@fuel/schemas';
-import { AuditAction, type AuthUser } from '@fuel/types';
+import { AuditAction, type AuthUser, RoleKey } from '@fuel/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { TokenService } from '../auth/token.service';
@@ -167,6 +167,10 @@ export class AdminService {
         include: { stations: true },
       });
       if (!employee) throw new NotFoundException({ code: 'EMPLOYEE_NOT_FOUND', message: 'Ажилтан олдсонгүй' });
+      // Эрх нэмэгдүүлэлтээс хамгаалах: зөвхөн OWNER нь OWNER эрх олгоно (ADMIN өөрийгөө/бусдыг OWNER болгохгүй).
+      if (input.roleKeys.includes(RoleKey.OWNER) && !user.roles.includes(RoleKey.OWNER)) {
+        throw new BadRequestException({ code: 'OWNER_GRANT_FORBIDDEN', message: 'OWNER эрхийг зөвхөн эзэмшигч олгоно' });
+      }
       const roles = await this.resolveRoles(tx, input.roleKeys);
       // Эрхийг ажилтны салбар(ууд)-д оноох (create-тэй нийцтэй); салбаргүй бол company-түвшинд.
       const stationIds = employee.stations.map((s) => s.stationId);

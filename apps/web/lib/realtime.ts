@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { tokenStore } from './api';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:4000';
+// Socket.IO сервер = API-тэй ижил host. Тусдаа NEXT_PUBLIC_WS_URL байхгүй бол API URL-ийг ашиглана
+// (production-д realtime localhost руу холбогдох алдааг засна).
+const WS_URL =
+  process.env.NEXT_PUBLIC_WS_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 type Handler = (payload: unknown) => void;
 
