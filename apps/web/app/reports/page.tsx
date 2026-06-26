@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Banknote,
+  BookOpen,
   Boxes,
   Building2,
   ClipboardList,
@@ -25,6 +26,7 @@ const REPORTS = [
   { href: '/reports/history', title: 'Борлуулалтын түүх', desc: 'Гүйлгээ бүрийн дэлгэрэнгүй, буцаалт / цуцлалт хийх.', icon: ClipboardList },
   { href: '/reports/ledger', title: 'Харилцагчийн тооцоо', desc: 'Авлага: эхний/эцсийн үлдэгдэл, дебет/кредит, гүйлгээний бараа.', icon: HandCoins },
   { href: '/reports/supplier-ledger', title: 'Нийлүүлэгчийн тооцоо', desc: 'Өглөг: эхний/эцсийн үлдэгдэл, дебет/кредит, гүйлгээний бараа.', icon: Building2 },
+  { href: '/reports/financial', title: 'Санхүүгийн тайлан', desc: 'Орлогын тайлан (P&L), Баланс, Гүйлгээний баланс — ерөнхий дэвтрээс.', icon: BookOpen },
   { href: '/reports/vat', title: 'НӨАТ тайлан', desc: 'Борлуулалтын НӨАТ (10%), татвартай/чөлөөлөгдсөн.', icon: PercentCircle },
   { href: '/reports/shifts', title: 'Ээлжийн тайлан (Z)', desc: 'Ээлжийн түүх, хаалтын Z-тайлан, тооцоо нийлэлт.', icon: FileText },
   { href: '/reports/margin', title: 'Түлшний маржин', desc: 'Грейдээр орлого, өртөг, ашгийн хувь.', icon: TrendingUp },

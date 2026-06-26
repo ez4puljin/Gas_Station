@@ -207,6 +207,9 @@ export const AuditAction = {
   PURCHASE_CANCEL: 'PURCHASE_CANCEL',
   SUPPLIER_PAYMENT: 'SUPPLIER_PAYMENT',
   SUPPLIER_ADJUST: 'SUPPLIER_ADJUST',
+  JOURNAL_POST: 'JOURNAL_POST',
+  JOURNAL_REVERSE: 'JOURNAL_REVERSE',
+  ACCOUNT_CHANGE: 'ACCOUNT_CHANGE',
   LOGIN: 'LOGIN',
   LOGOUT: 'LOGOUT',
 } as const;
@@ -218,3 +221,90 @@ export const ReceiptCustomerType = {
   ORGANIZATION: 'ORGANIZATION',
 } as const;
 export type ReceiptCustomerType = (typeof ReceiptCustomerType)[keyof typeof ReceiptCustomerType];
+
+// ── Нягтлан бодох бүртгэл (GL) ──
+/** Дансны төрөл (актив/өр/өмч/орлого/зардал) */
+export const AccountType = {
+  ASSET: 'ASSET',
+  LIABILITY: 'LIABILITY',
+  EQUITY: 'EQUITY',
+  REVENUE: 'REVENUE',
+  EXPENSE: 'EXPENSE',
+} as const;
+export type AccountType = (typeof AccountType)[keyof typeof AccountType];
+
+export const ACCOUNT_TYPE_LABEL: Record<AccountType, string> = {
+  ASSET: 'Хөрөнгө',
+  LIABILITY: 'Өр төлбөр',
+  EQUITY: 'Өмч',
+  REVENUE: 'Орлого',
+  EXPENSE: 'Зардал',
+};
+
+/** Дансны хэвийн тал — актив/зардал=дебет, өр/өмч/орлого=кредит */
+export const NormalSide = {
+  DEBIT: 'DEBIT',
+  CREDIT: 'CREDIT',
+} as const;
+export type NormalSide = (typeof NormalSide)[keyof typeof NormalSide];
+
+/** Актив/зардал дансны хэвийн тал = ДЕБЕТ; өр/өмч/орлого = КРЕДИТ. */
+export const NORMAL_SIDE_OF: Record<AccountType, NormalSide> = {
+  ASSET: 'DEBIT',
+  EXPENSE: 'DEBIT',
+  LIABILITY: 'CREDIT',
+  EQUITY: 'CREDIT',
+  REVENUE: 'CREDIT',
+};
+
+/** Журналын эх сурвалж */
+export const JournalSource = {
+  SALE: 'SALE',
+  PURCHASE: 'PURCHASE',
+  SUPPLIER_PAYMENT: 'SUPPLIER_PAYMENT',
+  CUSTOMER_PAYMENT: 'CUSTOMER_PAYMENT',
+  CASH: 'CASH',
+  PAYROLL: 'PAYROLL',
+  EOD: 'EOD',
+  OPENING: 'OPENING',
+  MANUAL: 'MANUAL',
+  ADJUSTMENT: 'ADJUSTMENT',
+} as const;
+export type JournalSource = (typeof JournalSource)[keyof typeof JournalSource];
+
+export const JOURNAL_SOURCE_LABEL: Record<JournalSource, string> = {
+  SALE: 'Борлуулалт',
+  PURCHASE: 'Худалдан авалт',
+  SUPPLIER_PAYMENT: 'Нийлүүлэгчид төлсөн',
+  CUSTOMER_PAYMENT: 'Харилцагчаас авсан',
+  CASH: 'Касс хөдөлгөөн',
+  PAYROLL: 'Цалин',
+  EOD: 'Өдрийн хаалт',
+  OPENING: 'Эхний үлдэгдэл',
+  MANUAL: 'Гар бичилт',
+  ADJUSTMENT: 'Засвар',
+};
+
+/** Монгол стандарт дансны кодын тогтмолууд — авто-бичилтэд (chart-of-accounts seed-тэй тохирно). */
+export const STD_ACCOUNT = {
+  CASH: '1100', // Касс
+  BANK: '1110', // Харилцах данс
+  AR_TRADE: '1200', // Худалдааны авлага
+  INVENTORY_GOODS: '1300', // Бараа материал
+  INVENTORY_FUEL: '1310', // Түлшний нөөц
+  AP_TRADE: '3100', // Худалдааны өглөг
+  VAT_PAYABLE: '3200', // НӨАТ-ын өглөг
+  PAYROLL_PAYABLE: '3300', // Цалингийн өглөг
+  TAX_PAYABLE: '3310', // НДШ/ХХОАТ өглөг
+  OWNER_EQUITY: '4100', // Эзэмшигчийн өмч
+  RETAINED_EARNINGS: '4200', // Хуримтлагдсан ашиг
+  REV_FUEL: '5100', // Түлшний борлуулалт
+  REV_GOODS: '5200', // Барааны борлуулалт
+  REV_OTHER: '5900', // Бусад орлого
+  COGS_FUEL: '6100', // Борлуулсан түлшний өртөг
+  COGS_GOODS: '6200', // Борлуулсан барааны өртөг
+  WAGES: '7100', // Цалин зардал
+  SOCIAL_INS_EXP: '7110', // НДШ зардал (ажил олгогч)
+  DEPRECIATION: '7400', // Элэгдэл
+  SHRINKAGE: '7900', // Хорогдол/алдагдал
+} as const;

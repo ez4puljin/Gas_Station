@@ -109,6 +109,36 @@ enum ReceiptCustomerType {
   ORGANIZATION
 }
 
+// ── Нягтлан бодох бүртгэл (GL) ──
+/// Дансны төрөл — П&Л/Балансад бүлэглэх (актив/өр/өмч/орлого/зардал)
+enum AccountType {
+  ASSET // хөрөнгө
+  LIABILITY // өр төлбөр
+  EQUITY // өмч
+  REVENUE // орлого
+  EXPENSE // зардал
+}
+
+/// Дансны хэвийн тал (дебет/кредит)
+enum NormalSide {
+  DEBIT
+  CREDIT
+}
+
+/// Журналын эх сурвалж — автомат бичилтийг ялгах
+enum JournalSource {
+  SALE // борлуулалт
+  PURCHASE // худалдан авалт
+  SUPPLIER_PAYMENT // нийлүүлэгчид төлсөн
+  CUSTOMER_PAYMENT // харилцагчаас авсан
+  CASH // касс хөдөлгөөн (drop/safe)
+  PAYROLL // цалин
+  EOD // өдрийн хаалт
+  OPENING // эхний үлдэгдэл
+  MANUAL // гар бичилт
+  ADJUSTMENT // засвар
+}
+
 // ─────────────────────────────────────────────────────────────
 // Байгууллага ба салбар
 // ─────────────────────────────────────────────────────────────
@@ -125,13 +155,15 @@ model Company {
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  stations      Station[]
-  employees     Employee[]
-  products      Product[]
-  productGroups ProductGroup[]
-  suppliers     Supplier[]
-  customers     Customer[]
-  purchases     Purchase[]
+  stations       Station[]
+  employees      Employee[]
+  products       Product[]
+  productGroups  ProductGroup[]
+  suppliers      Supplier[]
+  customers      Customer[]
+  purchases      Purchase[]
+  accounts       Account[]
+  journalEntries JournalEntry[]
 
   @@map("company")
 }
@@ -170,6 +202,8 @@ model Station {
   syncItems        SyncQueueItem[]
   customerTxns     CustomerTransaction[]
   purchaseLines    PurchaseLine[]
+  journalEntries   JournalEntry[]
+  journalLines     JournalLine[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -1058,4 +1092,87 @@ model SupplierTransaction {
 
   @@index([supplierId, createdAt])
   @@map("supplier_transaction")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Нягтлан бодох бүртгэл — Ерөнхий дэвтэр (GL)
+// Давхар бичилт: журнал бүрийн нийт дебет = нийт кредит (service-д хатуу шалгана).
+// Мөнгө = integer MNT (BigInt) — §2.1.
+// ─────────────────────────────────────────────────────────────
+
+/// Дансны төлөвлөгөө (chart of accounts) — компанийн мод бүтэцтэй данс.
+model Account {
+  id          String      @id @default(cuid())
+  companyId   String      @map("company_id")
+  code        String // дансны код, ж: "1100" (компани дотор давхцахгүй)
+  name        String
+  type        AccountType
+  normalSide  NormalSide  @map("normal_side") // хэвийн тал
+  parentId    String?     @map("parent_id") // эцэг данс (бүлэглэл)
+  isPostable  Boolean     @default(true) @map("is_postable") // зөвхөн навч дансанд бичнэ
+  isActive    Boolean     @default(true) @map("is_active")
+  description String?
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company  Company       @relation(fields: [companyId], references: [id])
+  parent   Account?      @relation("AccountTree", fields: [parentId], references: [id])
+  children Account[]     @relation("AccountTree")
+  lines    JournalLine[]
+
+  @@unique([companyId, code])
+  @@index([companyId, type])
+  @@map("account")
+}
+
+/// Журналын бичилт (толгой) — нэг санхүүгийн үйл явдал. lines нь давхар бичилт.
+model JournalEntry {
+  id          String        @id @default(cuid())
+  companyId   String        @map("company_id")
+  stationId   String?       @map("station_id") // cost center (салбар)
+  entryNo     String        @map("entry_no") // JE-YYYY/MM/DD-0001
+  date        DateTime      @db.Timestamptz(6) // санхүүгийн огноо (UTC)
+  source      JournalSource @default(MANUAL)
+  memo        String?
+  refType     String?       @map("ref_type") // sale | purchase | payment | cash | payroll ...
+  refId       String?       @map("ref_id")
+  posted      Boolean       @default(true) // ноорог=false, батлагдсан=true
+  reversedId  String?       @map("reversed_id") // энэ бичилт буцаасан бол → буцаалтын JE
+  createdById String        @map("created_by_id")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company Company       @relation(fields: [companyId], references: [id])
+  station Station?      @relation(fields: [stationId], references: [id])
+  lines   JournalLine[]
+
+  @@unique([companyId, entryNo])
+  @@index([companyId, date])
+  @@index([refType, refId])
+  @@map("journal_entry")
+}
+
+/// Журналын мөр — нэг данс, дебет ЭСВЭЛ кредит (нөгөө нь 0).
+model JournalLine {
+  id        String  @id @default(cuid())
+  entryId   String  @map("entry_id")
+  accountId String  @map("account_id")
+  stationId String? @map("station_id") // мөр-түвшний cost center (салбар)
+  debitMnt  BigInt  @default(0) @map("debit_mnt")
+  creditMnt BigInt  @default(0) @map("credit_mnt")
+  memo      String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  entry   JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  account Account      @relation(fields: [accountId], references: [id])
+  station Station?     @relation(fields: [stationId], references: [id])
+
+  @@index([entryId])
+  @@index([accountId])
+  @@map("journal_line")
 }

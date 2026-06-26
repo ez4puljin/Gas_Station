@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import {
   BarChart3,
+  BookOpen,
   Boxes,
   Building2,
   ClipboardList,
@@ -69,6 +70,7 @@ const NAV: NavGroup[] = [
     title: 'Санхүү',
     items: [
       { href: '/finance', label: 'Санхүү / Самбар', icon: BarChart3 },
+      { href: '/accounting', label: 'Нягтлан бодох бүртгэл', icon: BookOpen },
       { href: '/reports', label: 'Тайлан', icon: FileText },
     ],
   },
