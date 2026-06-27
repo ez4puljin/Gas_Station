@@ -1,4 +1,5 @@
-import { Controller, Get, Header, Query } from '@nestjs/common';
+import { Body, Controller, Get, Header, Ip, Param, Post, Query } from '@nestjs/common';
+import { z } from 'zod';
 import {
   type AnomalyQuery,
   anomalyQuerySchema,
@@ -92,5 +93,40 @@ export class FinanceController {
     @Query(new ZodValidationPipe(optionalStationRangeSchema)) q: OptionalStationRange,
   ) {
     return this.finance.vatReport(user, q);
+  }
+
+  // ── Өдрийн хаалт (EOD) ──
+  /** EOD статус + урьдчилсан дүн (хаахаас өмнө). */
+  @Get('eod/status')
+  eodStatus(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(dailyReportQuerySchema)) q: DailyReportQuery,
+  ) {
+    return this.finance.eodStatus(user, q.stationId, q.date);
+  }
+
+  /** Хаалтын жагсаалт. */
+  @Get('eod')
+  eodList(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(z.object({ stationId: z.string().optional() }))) q: { stationId?: string },
+  ) {
+    return this.finance.listCloses(user, q.stationId);
+  }
+
+  /** Өдрийг хааж GL-д бичих. */
+  @Post('eod/close')
+  eodClose(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(dailyReportQuerySchema)) dto: DailyReportQuery,
+    @Ip() ip: string,
+  ) {
+    return this.finance.closeDay(user, dto.stationId, dto.date, ip ?? null);
+  }
+
+  /** Хаалтыг дахин нээх (GL журнал буцаана). */
+  @Post('eod/:id/reopen')
+  eodReopen(@CurrentUser() user: AuthUser, @Param('id') id: string, @Ip() ip: string) {
+    return this.finance.reopenDay(user, id, ip ?? null);
   }
 }

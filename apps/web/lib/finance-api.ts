@@ -83,3 +83,42 @@ export const financeApi = {
     URL.revokeObjectURL(url);
   },
 };
+
+// ── Өдрийн хаалт (EOD) ──
+export interface EodSummary {
+  grossMnt: string;
+  netMnt: string;
+  vatMnt: string;
+  collectedMnt: string;
+  creditMnt: string;
+  refundsMnt: string;
+  salesCount: number;
+  byMethod: Record<string, string>;
+}
+export interface DailyCloseRow {
+  id: string;
+  stationId: string;
+  businessDate: string;
+  salesGrossMnt: string;
+  salesNetMnt: string;
+  vatMnt: string;
+  journalEntryId: string | null;
+  station?: { code: string; name: string };
+}
+export interface EodStatusDto {
+  stationId: string;
+  date: string;
+  closed: boolean;
+  close: DailyCloseRow | null;
+  summary: EodSummary;
+}
+
+export const eodApi = {
+  status: (stationId: string, date: string) =>
+    apiFetch<EodStatusDto>(`/finance/eod/status?stationId=${encodeURIComponent(stationId)}&date=${date}`),
+  list: (stationId?: string) =>
+    apiFetch<DailyCloseRow[]>(`/finance/eod${stationId ? `?stationId=${encodeURIComponent(stationId)}` : ''}`),
+  close: (stationId: string, date: string) =>
+    apiFetch<DailyCloseRow>('/finance/eod/close', { method: 'POST', body: JSON.stringify({ stationId, date }) }),
+  reopen: (id: string) => apiFetch(`/finance/eod/${id}/reopen`, { method: 'POST' }),
+};

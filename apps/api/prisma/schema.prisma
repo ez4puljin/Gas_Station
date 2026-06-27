@@ -204,6 +204,7 @@ model Station {
   purchaseLines    PurchaseLine[]
   journalEntries   JournalEntry[]
   journalLines     JournalLine[]
+  dailyCloses      DailyClose[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -1175,4 +1176,27 @@ model JournalLine {
   @@index([entryId])
   @@index([accountId])
   @@map("journal_line")
+}
+
+/// Өдрийн хаалт (EOD) — салбарын нэг өдрийн борлуулалтыг GL-д нэгтгэн бичсэн бүртгэл.
+/// Нэг салбар+өдөрт нэг удаа (давхар хаалтаас сэргийлнэ). Дахин нээхэд journal буцаана.
+model DailyClose {
+  id             String   @id @default(cuid())
+  stationId      String   @map("station_id")
+  businessDate   DateTime @map("business_date") @db.Date // UB календарийн өдөр
+  status         String   @default("CLOSED") // CLOSED | REOPENED
+  salesGrossMnt  BigInt   @map("sales_gross_mnt")
+  salesNetMnt    BigInt   @map("sales_net_mnt")
+  vatMnt         BigInt   @map("vat_mnt")
+  journalEntryId String?  @map("journal_entry_id")
+  closedById     String   @map("closed_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  station Station @relation(fields: [stationId], references: [id])
+
+  @@unique([stationId, businessDate])
+  @@index([stationId, businessDate])
+  @@map("daily_close")
 }

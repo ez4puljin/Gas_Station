@@ -8,6 +8,7 @@ import {
   BookOpen,
   Boxes,
   Building2,
+  CalendarCheck,
   ClipboardList,
   FileText,
   Fuel,
@@ -70,6 +71,7 @@ const NAV: NavGroup[] = [
     title: 'Санхүү',
     items: [
       { href: '/finance', label: 'Санхүү / Самбар', icon: BarChart3 },
+      { href: '/eod', label: 'Өдрийн хаалт', icon: CalendarCheck },
       { href: '/accounting', label: 'Нягтлан бодох бүртгэл', icon: BookOpen },
       { href: '/reports', label: 'Тайлан', icon: FileText },
     ],

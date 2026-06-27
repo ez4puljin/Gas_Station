@@ -1,15 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, SaleStatus } from '@prisma/client';
 import {
   divRoundHalfUp,
   milliToDecimalString,
   type OptionalStationRange,
   type SalesReportQuery,
+  splitVatFromGross,
   toMilliUnits,
 } from '@fuel/schemas';
-import { type AuthUser, PaymentMethod as PM } from '@fuel/types';
+import { AuditAction, type AuthUser, JournalSource, PaymentMethod as PM, STD_ACCOUNT } from '@fuel/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertStationAccess } from '../../common/utils/station-access';
+import { AccountingService } from '../accounting/accounting.service';
+import { AuditService } from '../audit/audit.service';
 
 /** Сэжигтэй буцаалтын босго (₮) — аномали илрүүлэлт §7.4 */
 const LARGE_REFUND_THRESHOLD = 100_000n;
@@ -37,7 +40,11 @@ function csvCell(value: string | bigint | number | null | undefined): string {
 
 @Injectable()
 export class FinanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly accounting: AccountingService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * Хандах эрхтэй салбарууд — ҮРГЭЛЖ DB-гээс баталгаажуулна (§10).
@@ -62,6 +69,147 @@ export class FinanceService {
     const { start, end } = ubDayRange(date);
     const summary = await this.stationDaySummary(stationId, start, end);
     return { stationId, date, ...summary };
+  }
+
+  // ── Өдрийн хаалт (EOD) — GL-д нэгтгэн бичих ──────────────
+  private bizDate(date: string): Date {
+    return new Date(`${date}T00:00:00Z`); // @db.Date — өдрийн хэсэг л хадгалагдана
+  }
+
+  /** EOD статус + урьдчилсан дүн (хаалтаас өмнө харах). */
+  async eodStatus(user: AuthUser, stationId: string, date: string) {
+    await assertStationAccess(this.prisma, user, stationId);
+    const { start, end } = ubDayRange(date);
+    const [summary, close] = await Promise.all([
+      this.stationDaySummary(stationId, start, end),
+      this.prisma.dailyClose.findUnique({ where: { stationId_businessDate: { stationId, businessDate: this.bizDate(date) } } }),
+    ]);
+    return { stationId, date, closed: !!close, close, summary };
+  }
+
+  /**
+   * Салбарын нэг өдрийн борлуулалтыг GL-д нэгтгэн бичиж "хаах". Нэг өдөрт нэг удаа.
+   * Журнал: Дт касс/банк/авлага (төлбөрийн хэлбэрээр) = Кт орлого (түлш/бараа цэвэр) + НӨАТ.
+   * Буцаалт байвал эсрэг мөрөөр цэвэрлэнэ. Тэнцэл хатуу (postJournalInTx).
+   * v1: өртөг (COGS)/нөөц хасалт хараахан бичигдэхгүй — дараагийн алхам.
+   */
+  async closeDay(user: AuthUser, stationId: string, date: string, ip: string | null) {
+    await assertStationAccess(this.prisma, user, stationId);
+    const existing = await this.prisma.dailyClose.findUnique({
+      where: { stationId_businessDate: { stationId, businessDate: this.bizDate(date) } },
+    });
+    if (existing) throw new BadRequestException({ code: 'DAY_ALREADY_CLOSED', message: 'Энэ өдөр аль хэдийн хаагдсан' });
+
+    const { start, end } = ubDayRange(date);
+    const s = await this.stationDaySummary(stationId, start, end);
+    await this.accounting.ensureChartOfAccounts(user.companyId);
+
+    return this.prisma.$transaction(async (tx) => {
+      let journalEntryId: string | null = null;
+      if (s.grossMnt > 0n) {
+        // Орлогыг түлш/бараагаар цэвэр (ex-VAT) задлана — нийт цэвэр=netMnt, НӨАТ=vatMnt тогтмол.
+        const productNet = splitVatFromGross(s.productSalesMnt).net;
+        const fuelNet = s.netMnt - productNet; // үлдэгдлээр (нийт цэвэр яг таарна)
+        const cash = s.byMethod[PM.CASH] ?? 0n;
+        const bank = (s.byMethod[PM.CARD] ?? 0n) + (s.byMethod[PM.TRANSFER] ?? 0n) + (s.byMethod[PM.MOBILE] ?? 0n) + (s.byMethod[PM.FUEL_CARD] ?? 0n);
+        const ar = s.byMethod[PM.CREDIT] ?? 0n;
+
+        const lines: { accountCode: string; debitMnt?: bigint; creditMnt?: bigint; memo?: string }[] = [];
+        if (cash > 0n) lines.push({ accountCode: STD_ACCOUNT.CASH, debitMnt: cash, memo: 'Бэлэн' });
+        if (bank > 0n) lines.push({ accountCode: STD_ACCOUNT.BANK, debitMnt: bank, memo: 'Карт/шилжүүлэг' });
+        if (ar > 0n) lines.push({ accountCode: STD_ACCOUNT.AR_TRADE, debitMnt: ar, memo: 'Зээл' });
+        if (fuelNet > 0n) lines.push({ accountCode: STD_ACCOUNT.REV_FUEL, creditMnt: fuelNet });
+        if (productNet > 0n) lines.push({ accountCode: STD_ACCOUNT.REV_GOODS, creditMnt: productNet });
+        if (s.vatMnt > 0n) lines.push({ accountCode: STD_ACCOUNT.VAT_PAYABLE, creditMnt: s.vatMnt });
+        if (s.refundsMnt > 0n) {
+          const { net: rNet, vat: rVat } = splitVatFromGross(s.refundsMnt);
+          if (rNet > 0n) lines.push({ accountCode: STD_ACCOUNT.REV_FUEL, debitMnt: rNet, memo: 'Буцаалт' });
+          if (rVat > 0n) lines.push({ accountCode: STD_ACCOUNT.VAT_PAYABLE, debitMnt: rVat, memo: 'Буцаалт НӨАТ' });
+          lines.push({ accountCode: STD_ACCOUNT.CASH, creditMnt: s.refundsMnt, memo: 'Буцаалт' });
+        }
+
+        const entry = await this.accounting.postJournalInTx(tx, {
+          companyId: user.companyId,
+          stationId,
+          date: start,
+          source: JournalSource.EOD,
+          memo: `Өдрийн хаалт ${date}`,
+          refType: 'eod',
+          createdById: user.sub,
+          lines,
+        });
+        journalEntryId = entry.id;
+      }
+
+      const close = await tx.dailyClose.create({
+        data: {
+          stationId,
+          businessDate: this.bizDate(date),
+          salesGrossMnt: s.grossMnt,
+          salesNetMnt: s.netMnt,
+          vatMnt: s.vatMnt,
+          journalEntryId,
+          closedById: user.sub,
+        },
+      });
+      await this.audit.record(
+        { actorId: user.sub, action: 'EOD_CLOSE', entity: 'DailyClose', entityId: close.id, after: close, stationId, ip },
+        tx,
+      );
+      return { ...close, journalEntryId };
+    });
+  }
+
+  /** Хаалтыг дахин нээх — GL журналыг буцааж (reversal) + хаалтын бичлэг устгана (дахин хаах боломжтой). */
+  async reopenDay(user: AuthUser, id: string, ip: string | null) {
+    const close = await this.prisma.dailyClose.findFirst({ where: { id, station: { companyId: user.companyId } } });
+    if (!close) throw new NotFoundException({ code: 'CLOSE_NOT_FOUND', message: 'Хаалт олдсонгүй' });
+    await assertStationAccess(this.prisma, user, close.stationId);
+    return this.prisma.$transaction(async (tx) => {
+      if (close.journalEntryId) {
+        const orig = await tx.journalEntry.findUnique({
+          where: { id: close.journalEntryId },
+          include: { lines: { include: { account: { select: { code: true } } } } },
+        });
+        if (orig && !orig.reversedId) {
+          const rev = await this.accounting.postJournalInTx(tx, {
+            companyId: user.companyId,
+            stationId: close.stationId,
+            date: new Date(),
+            source: JournalSource.ADJUSTMENT,
+            memo: `EOD дахин нээх: ${orig.entryNo}`,
+            refType: 'reversal',
+            refId: orig.id,
+            createdById: user.sub,
+            lines: orig.lines.map((l) => ({ accountCode: l.account.code, debitMnt: l.creditMnt, creditMnt: l.debitMnt })),
+          });
+          await tx.journalEntry.update({ where: { id: orig.id }, data: { reversedId: rev.id } });
+        }
+      }
+      await tx.dailyClose.delete({ where: { id: close.id } });
+      await this.audit.record(
+        { actorId: user.sub, action: 'EOD_REOPEN', entity: 'DailyClose', entityId: close.id, before: close, stationId: close.stationId, ip },
+        tx,
+      );
+      return { reopened: true };
+    });
+  }
+
+  /** Хаалтын жагсаалт (салбар/огноогоор). */
+  async listCloses(user: AuthUser, stationId?: string) {
+    let stationIds: string[];
+    if (stationId) {
+      await assertStationAccess(this.prisma, user, stationId);
+      stationIds = [stationId];
+    } else {
+      stationIds = await this.accessibleStationIds(user);
+    }
+    return this.prisma.dailyClose.findMany({
+      where: { stationId: { in: stationIds } },
+      include: { station: { select: { code: true, name: true } } },
+      orderBy: { businessDate: 'desc' },
+      take: 90,
+    });
   }
 
   /** Дотоод: нэг салбарын нэг өдрийн нэгтгэл (daily + consolidated-д дахин ашиглана) */
