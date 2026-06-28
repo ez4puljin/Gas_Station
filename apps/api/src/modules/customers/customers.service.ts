@@ -7,9 +7,10 @@ import {
   computeAging,
   type UpdateCustomerInput,
 } from '@fuel/schemas';
-import { AuditAction, type AuthUser, CustomerTxnType } from '@fuel/types';
+import { AuditAction, type AuthUser, CustomerTxnType, JournalSource, PaymentMethod, STD_ACCOUNT } from '@fuel/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertStationAccess } from '../../common/utils/station-access';
+import { AccountingService } from '../accounting/accounting.service';
 import { AuditService } from '../audit/audit.service';
 
 /**
@@ -22,6 +23,7 @@ export class CustomersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly accounting: AccountingService,
   ) {}
 
   /** Балансын мутацын өмнө мөрийг түгжиж, компани-scope-той уншина. */
@@ -205,6 +207,7 @@ export class CustomersService {
 
   /** Авлага барагдуулах төлбөр — балансыг бууруулна (§8 audit). */
   async recordPayment(user: AuthUser, id: string, input: CustomerPaymentInput, ip: string | null) {
+    await this.accounting.ensureChartOfAccounts(user.companyId);
     return this.prisma.$transaction(async (tx) => {
       // stationId өгсөн бол хандах эрх + company-г шалгана (§10)
       if (input.stationId) {
@@ -225,6 +228,21 @@ export class CustomersService {
           reason: input.note ?? null,
           actorId: user.sub,
         },
+      });
+      // GL: Дт касс/банк = Кт худалдааны авлага (AR).
+      await this.accounting.postJournalInTx(tx, {
+        companyId: user.companyId,
+        stationId: input.stationId ?? null,
+        date: new Date(),
+        source: JournalSource.CUSTOMER_PAYMENT,
+        memo: `Харилцагчаас авсан: ${customer.name}`,
+        refType: 'customer_payment',
+        refId: txn.id,
+        createdById: user.sub,
+        lines: [
+          { accountCode: input.method === PaymentMethod.CASH ? STD_ACCOUNT.CASH : STD_ACCOUNT.BANK, debitMnt: input.amount },
+          { accountCode: STD_ACCOUNT.AR_TRADE, creditMnt: input.amount },
+        ],
       });
       await this.audit.record(
         {

@@ -17,12 +17,16 @@ import {
   AuditAction,
   type AuthUser,
   FuelDeliveryStatus,
+  JournalSource,
+  PaymentMethod,
   SaleItemType,
+  STD_ACCOUNT,
   StockMovementType,
   SupplierTxnType,
 } from '@fuel/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertStationAccess } from '../../common/utils/station-access';
+import { AccountingService } from '../accounting/accounting.service';
 import { AuditService } from '../audit/audit.service';
 import { RealtimeEvent, RealtimeGateway } from '../realtime/realtime.gateway';
 
@@ -40,7 +44,13 @@ export class ProcurementService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly realtime: RealtimeGateway,
+    private readonly accounting: AccountingService,
   ) {}
+
+  /** Төлбөрийн хэлбэрээр касс/банкны GL данс. */
+  private cashOrBankAccount(method: PaymentMethod): string {
+    return method === PaymentMethod.CASH ? STD_ACCOUNT.CASH : STD_ACCOUNT.BANK;
+  }
 
   private notifyInventory(companyId: string, stationId: string): void {
     this.realtime.emitToStation(companyId, stationId, RealtimeEvent.INVENTORY_CHANGED, { stationId });
@@ -136,6 +146,7 @@ export class ProcurementService {
 
   /** Нийлүүлэгчид төлбөр төлөх — өглөгийг бууруулна (§8 audit). */
   async recordPayment(user: AuthUser, id: string, input: SupplierPaymentInput, ip: string | null) {
+    await this.accounting.ensureChartOfAccounts(user.companyId);
     return this.prisma.$transaction(async (tx) => {
       const supplier = await this.lockSupplier(tx, id, user.companyId);
       const delta = -input.amount; // төлбөр → өглөг хорогдоно
@@ -151,6 +162,20 @@ export class ProcurementService {
           reason: input.note ?? null,
           actorId: user.sub,
         },
+      });
+      // GL: Дт худалдааны өглөг (AP) = Кт касс/банк.
+      await this.accounting.postJournalInTx(tx, {
+        companyId: user.companyId,
+        date: new Date(),
+        source: JournalSource.SUPPLIER_PAYMENT,
+        memo: `Нийлүүлэгчид төлсөн: ${supplier.name}`,
+        refType: 'supplier_payment',
+        refId: txn.id,
+        createdById: user.sub,
+        lines: [
+          { accountCode: STD_ACCOUNT.AP_TRADE, debitMnt: input.amount },
+          { accountCode: this.cashOrBankAccount(input.method), creditMnt: input.amount },
+        ],
       });
       await this.audit.record(
         {
@@ -588,6 +613,7 @@ export class ProcurementService {
     input: ReceivePurchaseLineInput,
     ip: string | null,
   ) {
+    await this.accounting.ensureChartOfAccounts(user.companyId);
     const { result, stationId } = await this.prisma.$transaction(async (tx) => {
       // Мөрийг түгжинэ (давхар хүлээн авалтаас сэргийлнэ).
       await tx.$queryRaw`SELECT id FROM "purchase_line" WHERE id = ${lineId} FOR UPDATE`;
@@ -686,6 +712,25 @@ export class ProcurementService {
           actorId: user.sub,
         },
       });
+
+      // GL: Дт нөөц (түлш/бараа) = Кт худалдааны өглөг (AP).
+      if (line.totalCostMnt > 0n) {
+        const invAccount = line.itemType === SaleItemType.FUEL ? STD_ACCOUNT.INVENTORY_FUEL : STD_ACCOUNT.INVENTORY_GOODS;
+        await this.accounting.postJournalInTx(tx, {
+          companyId: user.companyId,
+          stationId: line.stationId,
+          date: new Date(),
+          source: JournalSource.PURCHASE,
+          memo: `Хүлээн авалт${line.purchase.documentNo ? ` ${line.purchase.documentNo}` : ''}`,
+          refType: 'purchase_line',
+          refId: line.id,
+          createdById: user.sub,
+          lines: [
+            { accountCode: invAccount, debitMnt: line.totalCostMnt },
+            { accountCode: STD_ACCOUNT.AP_TRADE, creditMnt: line.totalCostMnt },
+          ],
+        });
+      }
 
       const updated = await tx.purchaseLine.update({
         where: { id: line.id },
