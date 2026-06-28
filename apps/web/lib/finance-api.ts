@@ -111,6 +111,8 @@ export interface EodStatusDto {
   closed: boolean;
   close: DailyCloseRow | null;
   summary: EodSummary;
+  cogs: { fuelCogsMnt: string; productCogsMnt: string; totalMnt: string };
+  grossProfitMnt: string;
 }
 
 export const eodApi = {

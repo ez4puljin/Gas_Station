@@ -86,13 +86,15 @@ export default function EodPage() {
                   <button onClick={close} disabled={busy} className="inline-flex min-h-touch items-center gap-1.5 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:brightness-105 disabled:opacity-50"><Lock size={16} /> Өдрийг хаах</button>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Stat label="Нийт борлуулалт" value={formatMnt(s.grossMnt)} />
                 <Stat label="Цэвэр (НӨАТ-гүй)" value={formatMnt(s.netMnt)} />
                 <Stat label="НӨАТ" value={formatMnt(s.vatMnt)} />
                 <Stat label="Бэлэн цуглуулсан" value={formatMnt(s.collectedMnt)} />
                 <Stat label="Зээл (авлага)" value={formatMnt(s.creditMnt)} />
                 <Stat label="Буцаалт" value={formatMnt(s.refundsMnt)} cls={BigInt(s.refundsMnt) > 0n ? 'text-destructive' : ''} />
+                <Stat label="Барааны өртөг (COGS)" value={formatMnt(status!.cogs.totalMnt)} cls="text-amber-600" />
+                <Stat label="Бохир ашиг" value={formatMnt(status!.grossProfitMnt)} cls="text-emerald-600" />
               </div>
               <h3 className="mb-2 mt-5 text-sm font-semibold">Төлбөрийн хэлбэрээр</h3>
               <table className="w-full text-sm">
@@ -108,7 +110,7 @@ export default function EodPage() {
                   <button onClick={() => reopen(status.close!.id)} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-3 py-1 text-xs font-medium hover:bg-accent disabled:opacity-50"><RotateCcw size={13} /> Дахин нээх</button>
                 </p>
               )}
-              <p className="mt-3 text-xs text-muted-foreground">Хаалт: Дт касс/банк/авлага = Кт орлого (түлш/бараа) + НӨАТ. (v1: өртөг/нөөц хасалт дараагийн алхамд)</p>
+              <p className="mt-3 text-xs text-muted-foreground">Хаалт: Дт касс/банк/авлага = Кт орлого + НӨАТ; Дт өртөг (COGS) = Кт нөөц. Бохир ашиг = цэвэр орлого − өртөг.</p>
             </>
           )}
         </section>

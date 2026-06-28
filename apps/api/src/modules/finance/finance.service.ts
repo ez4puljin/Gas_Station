@@ -76,15 +76,72 @@ export class FinanceService {
     return new Date(`${date}T00:00:00Z`); // @db.Date — өдрийн хэсэг л хадгалагдана
   }
 
+  /**
+   * Тухайн өдрийн борлуулсан барааны өртөг (COGS). Түлш = грейдийн жигнэсэн дундаж
+   * нийлүүлэлтийн өртгөөр; бараа = product.costMnt-аар. Мөнгө = integer MNT (§2.1).
+   */
+  private async dayCogs(stationId: string, start: Date, end: Date): Promise<{ fuelCogsMnt: bigint; productCogsMnt: bigint }> {
+    const saleWhere = { stationId, deletedAt: null, soldAt: { gte: start, lt: end }, status: { not: SaleStatus.VOIDED } };
+    const [fuelSold, productSold] = await Promise.all([
+      this.prisma.saleLine.groupBy({ by: ['fuelGradeId'], where: { type: 'FUEL', sale: saleWhere }, _sum: { quantity: true } }),
+      this.prisma.saleLine.groupBy({ by: ['productId'], where: { type: 'PRODUCT', sale: saleWhere }, _sum: { quantity: true } }),
+    ]);
+
+    // Түлш: грейдийн жигнэсэн дундаж литрийн өртөг (бүх RECEIVED нийлүүлэлтээс).
+    const gradeIds = fuelSold.map((f) => f.fuelGradeId).filter((x): x is string => !!x);
+    const delAgg = gradeIds.length
+      ? await this.prisma.fuelDelivery.groupBy({
+          by: ['fuelGradeId'],
+          where: { stationId, status: 'RECEIVED', deletedAt: null, fuelGradeId: { in: gradeIds } },
+          _sum: { liters: true, totalCostMnt: true },
+        })
+      : [];
+    const avgByGrade = new Map<string, { milli: bigint; cost: bigint }>();
+    for (const d of delAgg) {
+      avgByGrade.set(d.fuelGradeId, { milli: toMilliUnits(d._sum.liters?.toString() ?? '0'), cost: d._sum.totalCostMnt ?? 0n });
+    }
+    let fuelCogsMnt = 0n;
+    for (const f of fuelSold) {
+      if (!f.fuelGradeId) continue;
+      const soldMilli = toMilliUnits(f._sum.quantity?.toString() ?? '0');
+      const avg = avgByGrade.get(f.fuelGradeId);
+      if (avg && avg.milli > 0n) fuelCogsMnt += divRoundHalfUp(soldMilli * avg.cost, avg.milli);
+    }
+
+    // Бараа: product.costMnt × тоо хэмжээ.
+    const productIds = productSold.map((p) => p.productId).filter((x): x is string => !!x);
+    const products = productIds.length
+      ? await this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, costMnt: true } })
+      : [];
+    const costById = new Map(products.map((p) => [p.id, p.costMnt ?? 0n]));
+    let productCogsMnt = 0n;
+    for (const p of productSold) {
+      if (!p.productId) continue;
+      const soldMilli = toMilliUnits(p._sum.quantity?.toString() ?? '0');
+      productCogsMnt += divRoundHalfUp(soldMilli * (costById.get(p.productId) ?? 0n), 1000n);
+    }
+    return { fuelCogsMnt, productCogsMnt };
+  }
+
   /** EOD статус + урьдчилсан дүн (хаалтаас өмнө харах). */
   async eodStatus(user: AuthUser, stationId: string, date: string) {
     await assertStationAccess(this.prisma, user, stationId);
     const { start, end } = ubDayRange(date);
-    const [summary, close] = await Promise.all([
+    const [summary, cogs, close] = await Promise.all([
       this.stationDaySummary(stationId, start, end),
+      this.dayCogs(stationId, start, end),
       this.prisma.dailyClose.findUnique({ where: { stationId_businessDate: { stationId, businessDate: this.bizDate(date) } } }),
     ]);
-    return { stationId, date, closed: !!close, close, summary };
+    const cogsTotalMnt = cogs.fuelCogsMnt + cogs.productCogsMnt;
+    return {
+      stationId,
+      date,
+      closed: !!close,
+      close,
+      summary,
+      cogs: { ...cogs, totalMnt: cogsTotalMnt },
+      grossProfitMnt: summary.netMnt - cogsTotalMnt, // НӨАТ-гүй цэвэр орлого − өртөг
+    };
   }
 
   /**
@@ -101,7 +158,10 @@ export class FinanceService {
     if (existing) throw new BadRequestException({ code: 'DAY_ALREADY_CLOSED', message: 'Энэ өдөр аль хэдийн хаагдсан' });
 
     const { start, end } = ubDayRange(date);
-    const s = await this.stationDaySummary(stationId, start, end);
+    const [s, cogs] = await Promise.all([
+      this.stationDaySummary(stationId, start, end),
+      this.dayCogs(stationId, start, end),
+    ]);
     await this.accounting.ensureChartOfAccounts(user.companyId);
 
     return this.prisma.$transaction(async (tx) => {
@@ -126,6 +186,16 @@ export class FinanceService {
           if (rNet > 0n) lines.push({ accountCode: STD_ACCOUNT.REV_FUEL, debitMnt: rNet, memo: 'Буцаалт' });
           if (rVat > 0n) lines.push({ accountCode: STD_ACCOUNT.VAT_PAYABLE, debitMnt: rVat, memo: 'Буцаалт НӨАТ' });
           lines.push({ accountCode: STD_ACCOUNT.CASH, creditMnt: s.refundsMnt, memo: 'Буцаалт' });
+        }
+
+        // Борлуулсан барааны өртөг (COGS): Дт өртөг = Кт нөөц (өөрөө тэнцэнэ).
+        if (cogs.fuelCogsMnt > 0n) {
+          lines.push({ accountCode: STD_ACCOUNT.COGS_FUEL, debitMnt: cogs.fuelCogsMnt, memo: 'Түлшний өртөг' });
+          lines.push({ accountCode: STD_ACCOUNT.INVENTORY_FUEL, creditMnt: cogs.fuelCogsMnt });
+        }
+        if (cogs.productCogsMnt > 0n) {
+          lines.push({ accountCode: STD_ACCOUNT.COGS_GOODS, debitMnt: cogs.productCogsMnt, memo: 'Барааны өртөг' });
+          lines.push({ accountCode: STD_ACCOUNT.INVENTORY_GOODS, creditMnt: cogs.productCogsMnt });
         }
 
         const entry = await this.accounting.postJournalInTx(tx, {

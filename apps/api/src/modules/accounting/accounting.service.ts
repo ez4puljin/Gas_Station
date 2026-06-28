@@ -181,8 +181,10 @@ export class AccountingService {
     const ymd = this.ubYmd(params.date);
     const dayStart = new Date(`${ymd.replace(/\//g, '-')}T00:00:00+08:00`);
     const dayEnd = new Date(dayStart.getTime() + 24 * 3600 * 1000);
+    // entryNo нь бизнесийн ОГНООгоор (date), бичсэн өдрөөр (createdAt) биш — буцаан огноолсон/
+    // дахин бичсэн бичилтэд давхцахгүй. deletedAt шүүхгүй (монотон дугаар; unique-д бүх мөр орно).
     const seq = await tx.journalEntry.count({
-      where: { companyId: params.companyId, createdAt: { gte: dayStart, lt: dayEnd } },
+      where: { companyId: params.companyId, date: { gte: dayStart, lt: dayEnd } },
     });
     const entryNo = `JE-${ymd}-${String(seq + 1).padStart(4, '0')}`;
 
