@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  computeAging,
   type CreatePurchaseInput,
   type CreateSupplierInput,
   lineTotalMnt,
@@ -342,6 +343,43 @@ export class ProcurementService {
         isActive: s.isActive,
       })),
     };
+  }
+
+  /** Өглөгийн насжилт (AP aging) — нийлүүлэгч бүрийн барагдаагүй өглөгийг наснаар (FIFO) бүлэглэнэ. */
+  async aging(user: AuthUser, asOf?: string) {
+    const asOfDate = asOf ? new Date(`${asOf}T23:59:59+08:00`) : new Date();
+    const suppliers = await this.prisma.supplier.findMany({
+      where: { companyId: user.companyId, deletedAt: null, balanceMnt: { gt: 0n } },
+      select: { id: true, name: true, phone: true, regNo: true },
+    });
+    const ids = suppliers.map((s) => s.id);
+    const txns = ids.length
+      ? await this.prisma.supplierTransaction.findMany({
+          where: { supplierId: { in: ids } },
+          select: { supplierId: true, createdAt: true, amountMnt: true },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+    const bySupplier = new Map<string, { date: Date; amountMnt: bigint }[]>();
+    for (const t of txns) {
+      const arr = bySupplier.get(t.supplierId) ?? [];
+      arr.push({ date: t.createdAt, amountMnt: t.amountMnt });
+      bySupplier.set(t.supplierId, arr);
+    }
+    const totals = { b0_30Mnt: 0n, b31_60Mnt: 0n, b61_90Mnt: 0n, b90plusMnt: 0n, totalMnt: 0n };
+    const rows = suppliers
+      .map((s) => {
+        const a = computeAging(bySupplier.get(s.id) ?? [], asOfDate);
+        totals.b0_30Mnt += a.b0_30Mnt;
+        totals.b31_60Mnt += a.b31_60Mnt;
+        totals.b61_90Mnt += a.b61_90Mnt;
+        totals.b90plusMnt += a.b90plusMnt;
+        totals.totalMnt += a.totalMnt;
+        return { id: s.id, name: s.name, phone: s.phone, regNo: s.regNo, ...a };
+      })
+      .filter((r) => r.totalMnt > 0n)
+      .sort((x, y) => (y.totalMnt > x.totalMnt ? 1 : -1));
+    return { asOf: asOf ?? asOfDate.toISOString().slice(0, 10), totals, rows };
   }
 
   // ════════════════════════════════════════════════════════

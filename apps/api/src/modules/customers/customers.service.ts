@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type {
-  CreateCustomerInput,
-  CustomerAdjustmentInput,
-  CustomerPaymentInput,
-  UpdateCustomerInput,
+import {
+  type CreateCustomerInput,
+  type CustomerAdjustmentInput,
+  type CustomerPaymentInput,
+  computeAging,
+  type UpdateCustomerInput,
 } from '@fuel/schemas';
 import { AuditAction, type AuthUser, CustomerTxnType } from '@fuel/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -423,5 +424,42 @@ export class CustomersService {
         isActive: c.isActive,
       })),
     };
+  }
+
+  /** Авлагын насжилт (AR aging) — харилцагч бүрийн барагдаагүй авлагыг наснаар (FIFO) бүлэглэнэ. */
+  async aging(user: AuthUser, asOf?: string) {
+    const asOfDate = asOf ? new Date(`${asOf}T23:59:59+08:00`) : new Date();
+    const customers = await this.prisma.customer.findMany({
+      where: { companyId: user.companyId, deletedAt: null, balanceMnt: { gt: 0n } },
+      select: { id: true, name: true, phone: true, regNo: true },
+    });
+    const ids = customers.map((c) => c.id);
+    const txns = ids.length
+      ? await this.prisma.customerTransaction.findMany({
+          where: { customerId: { in: ids } },
+          select: { customerId: true, createdAt: true, amountMnt: true },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+    const byCustomer = new Map<string, { date: Date; amountMnt: bigint }[]>();
+    for (const t of txns) {
+      const arr = byCustomer.get(t.customerId) ?? [];
+      arr.push({ date: t.createdAt, amountMnt: t.amountMnt });
+      byCustomer.set(t.customerId, arr);
+    }
+    const totals = { b0_30Mnt: 0n, b31_60Mnt: 0n, b61_90Mnt: 0n, b90plusMnt: 0n, totalMnt: 0n };
+    const rows = customers
+      .map((c) => {
+        const a = computeAging(byCustomer.get(c.id) ?? [], asOfDate);
+        totals.b0_30Mnt += a.b0_30Mnt;
+        totals.b31_60Mnt += a.b31_60Mnt;
+        totals.b61_90Mnt += a.b61_90Mnt;
+        totals.b90plusMnt += a.b90plusMnt;
+        totals.totalMnt += a.totalMnt;
+        return { id: c.id, name: c.name, phone: c.phone, regNo: c.regNo, ...a };
+      })
+      .filter((r) => r.totalMnt > 0n)
+      .sort((x, y) => (y.totalMnt > x.totalMnt ? 1 : -1));
+    return { asOf: asOf ?? asOfDate.toISOString().slice(0, 10), totals, rows };
   }
 }

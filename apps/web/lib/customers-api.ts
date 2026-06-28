@@ -66,7 +66,21 @@ export interface Ledger {
   entries: LedgerEntry[];
 }
 
+export interface AgingBucketsDto {
+  b0_30Mnt: string;
+  b31_60Mnt: string;
+  b61_90Mnt: string;
+  b90plusMnt: string;
+  totalMnt: string;
+}
+export interface AgingReport {
+  asOf: string;
+  totals: AgingBucketsDto;
+  rows: (AgingBucketsDto & { id: string; name: string; phone: string | null; regNo: string | null })[];
+}
+
 export const customersApi = {
+  aging: (asOf?: string) => apiFetch<AgingReport>(`/customers/aging${asOf ? `?asOf=${asOf}` : ''}`),
   list: (search?: string) =>
     apiFetch<Customer[]>(`/customers${search ? `?search=${encodeURIComponent(search)}` : ''}`),
   get: (id: string) => apiFetch<Customer>(`/customers/${id}`),

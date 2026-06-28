@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Ip, Param, Patch, Post, Query } from '@nestjs/common';
+import { z } from 'zod';
 import {
   type CreatePurchaseInput,
   createPurchaseSchema,
@@ -40,6 +41,16 @@ export class ProcurementController {
   @Roles(RoleKey.ACCOUNTANT, RoleKey.STATION_MANAGER)
   payables(@CurrentUser() user: AuthUser) {
     return this.procurement.payables(user);
+  }
+
+  /** Өглөгийн насжилт (AP aging) — 0-30/31-60/61-90/90+. '/:id'-ээс ӨМНӨ. */
+  @Get('suppliers/aging')
+  @Roles(RoleKey.ACCOUNTANT, RoleKey.STATION_MANAGER)
+  aging(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(z.object({ asOf: z.string().optional() }))) q: { asOf?: string },
+  ) {
+    return this.procurement.aging(user, q.asOf);
   }
 
   @Get('suppliers/:id')

@@ -151,6 +151,7 @@ export const procurementApi = {
   adjust: (id: string, body: unknown) =>
     apiFetch(`/suppliers/${id}/adjustments`, { method: 'POST', body: JSON.stringify(body) }),
   payables: () => apiFetch<Payables>('/suppliers/payables'),
+  aging: (asOf?: string) => apiFetch<import('./customers-api').AgingReport>(`/suppliers/aging${asOf ? `?asOf=${asOf}` : ''}`),
 
   // Худалдан авалт
   purchases: (f: PurchaseListFilters = {}) =>

@@ -42,6 +42,16 @@ export class CustomersController {
     return this.customers.receivables(user);
   }
 
+  /** Авлагын насжилт (AR aging) — 0-30/31-60/61-90/90+. '/:id'-ээс ӨМНӨ. */
+  @Get('aging')
+  @Roles(RoleKey.ACCOUNTANT, RoleKey.STATION_MANAGER)
+  aging(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(z.object({ asOf: z.string().optional() }))) q: { asOf?: string },
+  ) {
+    return this.customers.aging(user, q.asOf);
+  }
+
   @Get(':id')
   @Roles(RoleKey.CASHIER, RoleKey.SHIFT_SUPERVISOR, RoleKey.STATION_MANAGER, RoleKey.ACCOUNTANT)
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {

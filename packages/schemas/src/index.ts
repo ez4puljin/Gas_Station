@@ -1,6 +1,7 @@
 export * from './money';
 export * from './quantity';
 export * from './ledger';
+export * from './aging';
 export * from './common';
 export * from './auth';
 export * from './station';
