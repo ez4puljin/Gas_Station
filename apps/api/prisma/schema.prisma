@@ -139,6 +139,13 @@ enum JournalSource {
   ADJUSTMENT // засвар
 }
 
+/// Бэлэн мөнгөний хөдөлгөөн: касс→сейф (drop), сейф→банк (CIT/хадгаламж), тооллогын засвар
+enum CashMovementType {
+  DROP // касс → сейф
+  DEPOSIT // сейф → банк (CIT)
+  ADJUSTMENT // сейфийн тооллогын засвар (тэмдэгтэй)
+}
+
 // ─────────────────────────────────────────────────────────────
 // Байгууллага ба салбар
 // ─────────────────────────────────────────────────────────────
@@ -205,6 +212,7 @@ model Station {
   journalEntries   JournalEntry[]
   journalLines     JournalLine[]
   dailyCloses      DailyClose[]
+  cashMovements    CashMovement[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -1199,4 +1207,25 @@ model DailyClose {
   @@unique([stationId, businessDate])
   @@index([stationId, businessDate])
   @@map("daily_close")
+}
+
+/// Бэлэн мөнгөний хөдөлгөөн (касс→сейф→банк). Бүр GL-д бичигдэнэ (journalEntryId).
+/// amountMnt: DROP/DEPOSIT эерэг; ADJUSTMENT тэмдэгтэй (+ сейф нэмэгдэх / − хорогдох).
+model CashMovement {
+  id             String           @id @default(cuid())
+  stationId      String           @map("station_id")
+  type           CashMovementType
+  amountMnt      BigInt           @map("amount_mnt")
+  reference      String? // уут/баримтын дугаар
+  note           String?
+  shiftId        String?          @map("shift_id")
+  journalEntryId String?          @map("journal_entry_id")
+  actorId        String           @map("actor_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  station Station @relation(fields: [stationId], references: [id])
+
+  @@index([stationId, createdAt])
+  @@map("cash_movement")
 }

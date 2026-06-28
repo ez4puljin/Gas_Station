@@ -21,6 +21,7 @@ import {
   ShoppingCart,
   Truck,
   Users,
+  Vault,
   Warehouse,
   Wallet,
   X,
@@ -72,6 +73,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/finance', label: 'Санхүү / Самбар', icon: BarChart3 },
       { href: '/eod', label: 'Өдрийн хаалт', icon: CalendarCheck },
+      { href: '/cash', label: 'Бэлэн мөнгө / Сейф', icon: Vault },
       { href: '/accounting', label: 'Нягтлан бодох бүртгэл', icon: BookOpen },
       { href: '/reports', label: 'Тайлан', icon: FileText },
     ],

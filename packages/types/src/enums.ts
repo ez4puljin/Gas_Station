@@ -272,6 +272,20 @@ export const JournalSource = {
 } as const;
 export type JournalSource = (typeof JournalSource)[keyof typeof JournalSource];
 
+/** Бэлэн мөнгөний хөдөлгөөний төрөл (касс→сейф→банк) */
+export const CashMovementType = {
+  DROP: 'DROP',
+  DEPOSIT: 'DEPOSIT',
+  ADJUSTMENT: 'ADJUSTMENT',
+} as const;
+export type CashMovementType = (typeof CashMovementType)[keyof typeof CashMovementType];
+
+export const CASH_MOVEMENT_LABEL: Record<CashMovementType, string> = {
+  DROP: 'Касс → Сейф',
+  DEPOSIT: 'Сейф → Банк',
+  ADJUSTMENT: 'Тооллогын засвар',
+};
+
 export const JOURNAL_SOURCE_LABEL: Record<JournalSource, string> = {
   SALE: 'Борлуулалт',
   PURCHASE: 'Худалдан авалт',
@@ -289,6 +303,7 @@ export const JOURNAL_SOURCE_LABEL: Record<JournalSource, string> = {
 export const STD_ACCOUNT = {
   CASH: '1100', // Касс
   BANK: '1110', // Харилцах данс
+  SAFE: '1120', // Бэлэн мөнгө — сейф
   AR_TRADE: '1200', // Худалдааны авлага
   INVENTORY_GOODS: '1300', // Бараа материал
   INVENTORY_FUEL: '1310', // Түлшний нөөц

@@ -12,4 +12,5 @@ export * from './sync';
 export * from './customer';
 export * from './procurement';
 export * from './accounting';
+export * from './cash';
 export * from './admin';

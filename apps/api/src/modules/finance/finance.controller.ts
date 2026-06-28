@@ -3,6 +3,10 @@ import { z } from 'zod';
 import {
   type AnomalyQuery,
   anomalyQuerySchema,
+  type CashAdjustInput,
+  cashAdjustSchema,
+  type CashTransferInput,
+  cashTransferSchema,
   type ConsolidatedQuery,
   consolidatedQuerySchema,
   type DailyReportQuery,
@@ -128,5 +132,32 @@ export class FinanceController {
   @Post('eod/:id/reopen')
   eodReopen(@CurrentUser() user: AuthUser, @Param('id') id: string, @Ip() ip: string) {
     return this.finance.reopenDay(user, id, ip ?? null);
+  }
+
+  // ── Бэлэн мөнгөний менежмент (касс→сейф→банк) ──
+  @Get('cash')
+  cash(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(z.object({ stationId: z.string().min(1) }))) q: { stationId: string },
+  ) {
+    return this.finance.cashMovements(user, q.stationId);
+  }
+
+  @Post('cash/transfer')
+  cashTransfer(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(cashTransferSchema)) dto: CashTransferInput,
+    @Ip() ip: string,
+  ) {
+    return this.finance.recordCashTransfer(user, dto, ip ?? null);
+  }
+
+  @Post('cash/adjust')
+  cashAdjust(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(cashAdjustSchema)) dto: CashAdjustInput,
+    @Ip() ip: string,
+  ) {
+    return this.finance.recordCashAdjust(user, dto, ip ?? null);
   }
 }

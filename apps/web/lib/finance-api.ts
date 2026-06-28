@@ -124,3 +124,28 @@ export const eodApi = {
     apiFetch<DailyCloseRow>('/finance/eod/close', { method: 'POST', body: JSON.stringify({ stationId, date }) }),
   reopen: (id: string) => apiFetch(`/finance/eod/${id}/reopen`, { method: 'POST' }),
 };
+
+// ── Бэлэн мөнгөний менежмент (касс→сейф→банк) ──
+export interface CashMovementRow {
+  id: string;
+  type: 'DROP' | 'DEPOSIT' | 'ADJUSTMENT';
+  amountMnt: string;
+  reference: string | null;
+  note: string | null;
+  journalEntryId: string | null;
+  createdAt: string;
+}
+export interface CashMovementsDto {
+  stationId: string;
+  safeBalanceMnt: string;
+  items: CashMovementRow[];
+}
+
+export const cashApi = {
+  movements: (stationId: string) =>
+    apiFetch<CashMovementsDto>(`/finance/cash?stationId=${encodeURIComponent(stationId)}`),
+  transfer: (body: { stationId: string; type: 'DROP' | 'DEPOSIT'; amount: string; reference?: string; note?: string }) =>
+    apiFetch<CashMovementRow>('/finance/cash/transfer', { method: 'POST', body: JSON.stringify(body) }),
+  adjust: (body: { stationId: string; amountMnt: string; reason: string }) =>
+    apiFetch<CashMovementRow>('/finance/cash/adjust', { method: 'POST', body: JSON.stringify(body) }),
+};

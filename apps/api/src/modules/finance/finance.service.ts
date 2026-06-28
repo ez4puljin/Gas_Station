@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, SaleStatus } from '@prisma/client';
 import {
+  type CashAdjustInput,
+  type CashTransferInput,
   divRoundHalfUp,
   milliToDecimalString,
   type OptionalStationRange,
@@ -8,7 +10,7 @@ import {
   splitVatFromGross,
   toMilliUnits,
 } from '@fuel/schemas';
-import { AuditAction, type AuthUser, JournalSource, PaymentMethod as PM, STD_ACCOUNT } from '@fuel/types';
+import { AuditAction, type AuthUser, CashMovementType, JournalSource, PaymentMethod as PM, STD_ACCOUNT } from '@fuel/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertStationAccess } from '../../common/utils/station-access';
 import { AccountingService } from '../accounting/accounting.service';
@@ -280,6 +282,127 @@ export class FinanceService {
       orderBy: { businessDate: 'desc' },
       take: 90,
     });
+  }
+
+  // ── Бэлэн мөнгөний менежмент (касс → сейф → банк) ──────
+  /** Сейф дэх бэлэн мөнгөний үлдэгдэл = Σ DROP − Σ DEPOSIT + Σ ADJUSTMENT(тэмдэгтэй). */
+  async safeBalance(user: AuthUser, stationId: string): Promise<bigint> {
+    await assertStationAccess(this.prisma, user, stationId);
+    const rows = await this.prisma.cashMovement.groupBy({
+      by: ['type'],
+      where: { stationId },
+      _sum: { amountMnt: true },
+    });
+    let bal = 0n;
+    for (const r of rows) {
+      const a = r._sum.amountMnt ?? 0n;
+      if (r.type === CashMovementType.DROP) bal += a;
+      else if (r.type === CashMovementType.DEPOSIT) bal -= a;
+      else bal += a; // ADJUSTMENT тэмдэгтэй
+    }
+    return bal;
+  }
+
+  /** Касс→сейф (DROP) эсвэл сейф→банк (DEPOSIT) шилжүүлэг — GL-д бичнэ. */
+  async recordCashTransfer(user: AuthUser, input: CashTransferInput, ip: string | null) {
+    await assertStationAccess(this.prisma, user, input.stationId);
+    await this.accounting.ensureChartOfAccounts(user.companyId);
+    // DEPOSIT үед сейфэд хүрэлцэхүйц мөнгө байх ёстой.
+    if (input.type === 'DEPOSIT') {
+      const bal = await this.safeBalance(user, input.stationId);
+      if (input.amount > bal) {
+        throw new BadRequestException({ code: 'INSUFFICIENT_SAFE', message: 'Сейфэд хүрэлцэхүйц мөнгө алга' });
+      }
+    }
+    const [dr, cr, memo] =
+      input.type === 'DROP'
+        ? [STD_ACCOUNT.SAFE, STD_ACCOUNT.CASH, 'Касс → сейф']
+        : [STD_ACCOUNT.BANK, STD_ACCOUNT.SAFE, 'Сейф → банк'];
+
+    return this.prisma.$transaction(async (tx) => {
+      const entry = await this.accounting.postJournalInTx(tx, {
+        companyId: user.companyId,
+        stationId: input.stationId,
+        date: new Date(),
+        source: JournalSource.CASH,
+        memo: input.note ? `${memo}: ${input.note}` : memo,
+        refType: 'cash',
+        createdById: user.sub,
+        lines: [
+          { accountCode: dr, debitMnt: input.amount },
+          { accountCode: cr, creditMnt: input.amount },
+        ],
+      });
+      const mv = await tx.cashMovement.create({
+        data: {
+          stationId: input.stationId,
+          type: input.type as CashMovementType,
+          amountMnt: input.amount,
+          reference: input.reference ?? null,
+          note: input.note ?? null,
+          shiftId: input.shiftId ?? null,
+          journalEntryId: entry.id,
+          actorId: user.sub,
+        },
+      });
+      await this.audit.record(
+        { actorId: user.sub, action: 'CASH_MOVE', entity: 'CashMovement', entityId: mv.id, after: mv, stationId: input.stationId, ip },
+        tx,
+      );
+      return mv;
+    });
+  }
+
+  /** Сейфийн тооллогын засвар — тэмдэгтэй (+ илүү → орлого, − дутуу → хорогдол), reason заавал. */
+  async recordCashAdjust(user: AuthUser, input: CashAdjustInput, ip: string | null) {
+    await assertStationAccess(this.prisma, user, input.stationId);
+    if (input.amountMnt === 0n) throw new BadRequestException({ code: 'INVALID_AMOUNT', message: 'Дүн 0 байж болохгүй' });
+    await this.accounting.ensureChartOfAccounts(user.companyId);
+    const abs = input.amountMnt > 0n ? input.amountMnt : -input.amountMnt;
+    // + : сейф нэмэгдэв (илүүдэл орлого) → Дт сейф, Кт бусад орлого
+    // − : сейф хорогдов (дутагдал) → Дт хорогдол, Кт сейф
+    const lines =
+      input.amountMnt > 0n
+        ? [{ accountCode: STD_ACCOUNT.SAFE, debitMnt: abs }, { accountCode: STD_ACCOUNT.REV_OTHER, creditMnt: abs }]
+        : [{ accountCode: STD_ACCOUNT.SHRINKAGE, debitMnt: abs }, { accountCode: STD_ACCOUNT.SAFE, creditMnt: abs }];
+
+    return this.prisma.$transaction(async (tx) => {
+      const entry = await this.accounting.postJournalInTx(tx, {
+        companyId: user.companyId,
+        stationId: input.stationId,
+        date: new Date(),
+        source: JournalSource.CASH,
+        memo: `Сейф тооллого: ${input.reason}`,
+        refType: 'cash',
+        createdById: user.sub,
+        lines,
+      });
+      const mv = await tx.cashMovement.create({
+        data: {
+          stationId: input.stationId,
+          type: CashMovementType.ADJUSTMENT,
+          amountMnt: input.amountMnt, // тэмдэгтэй
+          note: input.reason,
+          journalEntryId: entry.id,
+          actorId: user.sub,
+        },
+      });
+      await this.audit.record(
+        { actorId: user.sub, action: 'CASH_ADJUST', entity: 'CashMovement', entityId: mv.id, after: mv, stationId: input.stationId, ip },
+        tx,
+      );
+      return mv;
+    });
+  }
+
+  /** Бэлэн мөнгөний хөдөлгөөний жагсаалт + сейфийн үлдэгдэл. */
+  async cashMovements(user: AuthUser, stationId: string) {
+    await assertStationAccess(this.prisma, user, stationId);
+    const [items, balance] = await Promise.all([
+      this.prisma.cashMovement.findMany({ where: { stationId }, orderBy: { createdAt: 'desc' }, take: 100 }),
+      this.safeBalance(user, stationId),
+    ]);
+    return { stationId, safeBalanceMnt: balance, items };
   }
 
   /** Дотоод: нэг салбарын нэг өдрийн нэгтгэл (daily + consolidated-д дахин ашиглана) */
