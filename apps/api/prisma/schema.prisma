@@ -146,6 +146,12 @@ enum CashMovementType {
   ADJUSTMENT // сейфийн тооллогын засвар (тэмдэгтэй)
 }
 
+/// Цалингийн тооцооны төлөв
+enum PayrollStatus {
+  POSTED // тооцоолж GL-д бичсэн
+  REVERSED // буцаасан
+}
+
 // ─────────────────────────────────────────────────────────────
 // Байгууллага ба салбар
 // ─────────────────────────────────────────────────────────────
@@ -171,6 +177,7 @@ model Company {
   purchases      Purchase[]
   accounts       Account[]
   journalEntries JournalEntry[]
+  payrollRuns    PayrollRun[]
 
   @@map("company")
 }
@@ -665,27 +672,29 @@ model RefundLine {
 // ─────────────────────────────────────────────────────────────
 
 model Employee {
-  id           String         @id @default(cuid())
-  companyId    String         @map("company_id")
-  firstName    String         @map("first_name")
-  lastName     String         @map("last_name")
-  employeeCode String?        @map("employee_code")
-  phone        String?
-  email        String?
-  address      String?
-  status       EmployeeStatus @default(ACTIVE)
-  hiredAt      DateTime?      @map("hired_at") @db.Timestamptz(6)
+  id            String         @id @default(cuid())
+  companyId     String         @map("company_id")
+  firstName     String         @map("first_name")
+  lastName      String         @map("last_name")
+  employeeCode  String?        @map("employee_code")
+  phone         String?
+  email         String?
+  address       String?
+  status        EmployeeStatus @default(ACTIVE)
+  hiredAt       DateTime?      @map("hired_at") @db.Timestamptz(6)
+  baseSalaryMnt BigInt         @default(0) @map("base_salary_mnt") // сарын суурь цалин (integer MNT)
 
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  company     Company           @relation(fields: [companyId], references: [id])
-  user        User?
-  roles       EmployeeRole[]
-  stations    EmployeeStation[]
-  attendances Attendance[]
-  shiftLinks  ShiftCashier[]
+  company      Company           @relation(fields: [companyId], references: [id])
+  user         User?
+  roles        EmployeeRole[]
+  stations     EmployeeStation[]
+  attendances  Attendance[]
+  shiftLinks   ShiftCashier[]
+  payrollItems PayrollItem[]
 
   @@index([companyId])
   @@map("employee")
@@ -1228,4 +1237,50 @@ model CashMovement {
 
   @@index([stationId, createdAt])
   @@map("cash_movement")
+}
+
+/// Цалингийн тооцоо (нэг сар) — бүх ажилтны цалин нэгтгэж GL-д бичнэ. Нэг компани+сар нэг удаа.
+model PayrollRun {
+  id              String        @id @default(cuid())
+  companyId       String        @map("company_id")
+  period          String // YYYY-MM
+  status          PayrollStatus @default(POSTED)
+  grossMnt        BigInt        @map("gross_mnt")
+  employeeNdshMnt BigInt        @map("employee_ndsh_mnt") // ажилтнаас суутгасан НДШ
+  pitMnt          BigInt        @map("pit_mnt") // ХХОАТ
+  employerNdshMnt BigInt        @map("employer_ndsh_mnt") // ажил олгогчийн НДШ
+  netMnt          BigInt        @map("net_mnt") // гарт олгох нийт
+  journalEntryId  String?       @map("journal_entry_id")
+  runById         String        @map("run_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company Company       @relation(fields: [companyId], references: [id])
+  items   PayrollItem[]
+
+  @@unique([companyId, period])
+  @@index([companyId, period])
+  @@map("payroll_run")
+}
+
+/// Нэг ажилтны нэг сарын цалингийн хуудас (payslip).
+model PayrollItem {
+  id              String @id @default(cuid())
+  payrollRunId    String @map("payroll_run_id")
+  employeeId      String @map("employee_id")
+  baseSalaryMnt   BigInt @map("base_salary_mnt")
+  bonusMnt        BigInt @default(0) @map("bonus_mnt")
+  grossMnt        BigInt @map("gross_mnt")
+  employeeNdshMnt BigInt @map("employee_ndsh_mnt")
+  pitMnt          BigInt @map("pit_mnt")
+  employerNdshMnt BigInt @map("employer_ndsh_mnt")
+  netMnt          BigInt @map("net_mnt")
+
+  run      PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employee Employee   @relation(fields: [employeeId], references: [id])
+
+  @@index([payrollRunId])
+  @@index([employeeId])
+  @@map("payroll_item")
 }

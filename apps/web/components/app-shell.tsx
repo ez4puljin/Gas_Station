@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import {
+  Banknote,
   BarChart3,
   BookOpen,
   Boxes,
@@ -65,6 +66,7 @@ const NAV: NavGroup[] = [
     title: 'Ажилтан',
     items: [
       { href: '/staff', label: 'Ажилтан / Ээлж', icon: Users },
+      { href: '/payroll', label: 'Цалин', icon: Banknote },
       { href: '/control', label: 'Хяналтын самбар', icon: Gauge },
     ],
   },

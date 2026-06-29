@@ -286,6 +286,13 @@ export const CASH_MOVEMENT_LABEL: Record<CashMovementType, string> = {
   ADJUSTMENT: 'Тооллогын засвар',
 };
 
+/** Цалингийн тооцооны төлөв */
+export const PayrollStatus = {
+  POSTED: 'POSTED',
+  REVERSED: 'REVERSED',
+} as const;
+export type PayrollStatus = (typeof PayrollStatus)[keyof typeof PayrollStatus];
+
 export const JOURNAL_SOURCE_LABEL: Record<JournalSource, string> = {
   SALE: 'Борлуулалт',
   PURCHASE: 'Худалдан авалт',
