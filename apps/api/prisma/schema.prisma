@@ -152,6 +152,20 @@ enum PayrollStatus {
   REVERSED // буцаасан
 }
 
+enum LeaveType {
+  ANNUAL // ээлжийн амралт
+  SICK // өвчний чөлөө
+  UNPAID // цалингүй чөлөө
+  OTHER // бусад
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 // ─────────────────────────────────────────────────────────────
 // Байгууллага ба салбар
 // ─────────────────────────────────────────────────────────────
@@ -178,6 +192,7 @@ model Company {
   accounts       Account[]
   journalEntries JournalEntry[]
   payrollRuns    PayrollRun[]
+  leaveRequests  LeaveRequest[]
 
   @@map("company")
 }
@@ -680,9 +695,10 @@ model Employee {
   phone         String?
   email         String?
   address       String?
-  status        EmployeeStatus @default(ACTIVE)
-  hiredAt       DateTime?      @map("hired_at") @db.Timestamptz(6)
-  baseSalaryMnt BigInt         @default(0) @map("base_salary_mnt") // сарын суурь цалин (integer MNT)
+  status          EmployeeStatus @default(ACTIVE)
+  hiredAt         DateTime?      @map("hired_at") @db.Timestamptz(6)
+  baseSalaryMnt   BigInt         @default(0) @map("base_salary_mnt") // сарын суурь цалин (integer MNT)
+  annualLeaveDays Int            @default(15) @map("annual_leave_days") // жилийн ээлжийн амралтын эрх (өдөр)
 
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -692,9 +708,10 @@ model Employee {
   user         User?
   roles        EmployeeRole[]
   stations     EmployeeStation[]
-  attendances  Attendance[]
-  shiftLinks   ShiftCashier[]
-  payrollItems PayrollItem[]
+  attendances   Attendance[]
+  shiftLinks    ShiftCashier[]
+  payrollItems  PayrollItem[]
+  leaveRequests LeaveRequest[]
 
   @@index([companyId])
   @@map("employee")
@@ -1290,4 +1307,32 @@ model PayrollItem {
   @@index([payrollRunId])
   @@index([employeeId])
   @@map("payroll_item")
+}
+
+/// Чөлөөний хүсэлт — хүсэлт→батлах/татгалзах урсгал (separation of duties), хоног + үлдэгдэл.
+model LeaveRequest {
+  id            String      @id @default(cuid())
+  companyId     String      @map("company_id")
+  employeeId    String      @map("employee_id")
+  type          LeaveType
+  status        LeaveStatus @default(PENDING)
+  startDate     DateTime    @map("start_date") @db.Date // эхлэх (оруулж)
+  endDate       DateTime    @map("end_date") @db.Date // дуусах (оруулж)
+  days          Int // хуанлийн хоног (тооцоолсон)
+  reason        String?
+  requestedById String      @map("requested_by_id")
+  decidedById   String?     @map("decided_by_id")
+  decidedAt     DateTime?   @map("decided_at") @db.Timestamptz(6)
+  decisionNote  String?     @map("decision_note")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([companyId, status])
+  @@index([employeeId, startDate])
+  @@map("leave_request")
 }

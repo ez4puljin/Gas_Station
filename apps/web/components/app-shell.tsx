@@ -8,6 +8,7 @@ import {
   BarChart3,
   BookOpen,
   Boxes,
+  CalendarDays,
   Building2,
   CalendarCheck,
   ClipboardList,
@@ -68,6 +69,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/staff', label: 'Ажилтан / Ээлж', icon: Users },
       { href: '/attendance', label: 'Цаг бүртгэл', icon: Clock },
+      { href: '/leave', label: 'Чөлөө', icon: CalendarDays },
       { href: '/payroll', label: 'Цалин', icon: Banknote },
       { href: '/control', label: 'Хяналтын самбар', icon: Gauge },
     ],

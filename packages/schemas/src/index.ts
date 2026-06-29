@@ -4,6 +4,7 @@ export * from './ledger';
 export * from './aging';
 export * from './payroll';
 export * from './attendance';
+export * from './leave';
 export * from './common';
 export * from './auth';
 export * from './station';
