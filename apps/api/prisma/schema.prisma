@@ -884,19 +884,26 @@ model CashReconciliation {
 }
 
 model Attendance {
-  id         String    @id @default(cuid())
-  employeeId String    @map("employee_id")
-  stationId  String    @map("station_id")
-  clockIn    DateTime  @map("clock_in") @db.Timestamptz(6)
-  clockOut   DateTime? @map("clock_out") @db.Timestamptz(6)
+  id            String    @id @default(cuid())
+  employeeId    String    @map("employee_id")
+  stationId     String    @map("station_id")
+  clockIn       DateTime  @map("clock_in") @db.Timestamptz(6)
+  clockOut      DateTime? @map("clock_out") @db.Timestamptz(6)
+  breakMinutes  Int       @default(0) @map("break_minutes") // завсарлага (минут)
+  workedMinutes Int?      @map("worked_minutes") // clock-out үед бодно: (гарах−орох) − завсарлага
+  note          String?
+  recordedById  String?   @map("recorded_by_id") // бүртгэсэн хэрэглэгч (actorId)
 
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   employee Employee @relation(fields: [employeeId], references: [id])
   station  Station  @relation(fields: [stationId], references: [id])
 
   @@index([employeeId])
   @@index([stationId, clockIn])
+  // Нэг ажилтанд нэг л нээлттэй (clock_out IS NULL, устгаагүй) бичлэг — partial unique (raw SQL migration §12).
   @@map("attendance")
 }
 

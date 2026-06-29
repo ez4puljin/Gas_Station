@@ -11,6 +11,7 @@ import {
   Building2,
   CalendarCheck,
   ClipboardList,
+  Clock,
   FileText,
   Fuel,
   Gauge,
@@ -66,6 +67,7 @@ const NAV: NavGroup[] = [
     title: 'Ажилтан',
     items: [
       { href: '/staff', label: 'Ажилтан / Ээлж', icon: Users },
+      { href: '/attendance', label: 'Цаг бүртгэл', icon: Clock },
       { href: '/payroll', label: 'Цалин', icon: Banknote },
       { href: '/control', label: 'Хяналтын самбар', icon: Gauge },
     ],
