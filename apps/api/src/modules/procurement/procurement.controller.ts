@@ -53,6 +53,16 @@ export class ProcurementController {
     return this.procurement.aging(user, q.asOf);
   }
 
+  /** Тооцооны нэгдсэн бүртгэл — бүх нийлүүлэгч × эхний/дебет/кредит/эцсийн. '/:id'-ээс ӨМНӨ. */
+  @Get('suppliers/register')
+  @Roles(RoleKey.ACCOUNTANT, RoleKey.STATION_MANAGER)
+  register(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(z.object({ from: z.string(), to: z.string() }))) q: { from: string; to: string },
+  ) {
+    return this.procurement.register(user, q.from, q.to);
+  }
+
   @Get('suppliers/:id')
   @Roles(RoleKey.STATION_MANAGER, RoleKey.ACCOUNTANT)
   getSupplier(@CurrentUser() user: AuthUser, @Param('id') id: string) {

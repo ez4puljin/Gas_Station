@@ -5,6 +5,7 @@ import {
   type CustomerAdjustmentInput,
   type CustomerPaymentInput,
   computeAging,
+  ledgerClosing,
   type UpdateCustomerInput,
 } from '@fuel/schemas';
 import { AuditAction, type AuthUser, CustomerTxnType, JournalSource, PaymentMethod, STD_ACCOUNT } from '@fuel/types';
@@ -442,6 +443,83 @@ export class CustomersService {
         isActive: c.isActive,
       })),
     };
+  }
+
+  /**
+   * Харилцагчийн тооцооны НЭГДСЭН БҮРТГЭЛ — нягтлангийн үндсэн тайлан.
+   * Харилцагч бүрээр: Эхний үлдэгдэл · мужийн Дебет/Кредит · Эцсийн үлдэгдэл.
+   *
+   * Эхний = мужийн ӨМНӨХ сүүлчийн `balanceAfterMnt`; эцсийн = эхний + дебет − кредит (§12).
+   * Гүйлгээгүй боловч эхний үлдэгдэлтэй харилцагчид ч мөрөнд орно.
+   */
+  async register(user: AuthUser, from: string, to: string) {
+    const start = new Date(`${from}T00:00:00+08:00`);
+    const end = new Date(new Date(`${to}T00:00:00+08:00`).getTime() + 24 * 3600 * 1000);
+    const [company, customers] = await Promise.all([
+      this.prisma.company.findUnique({ where: { id: user.companyId }, select: { name: true } }),
+      this.prisma.customer.findMany({
+        where: { companyId: user.companyId, deletedAt: null },
+        select: { id: true, code: true, name: true, regNo: true, phone: true },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+    const ids = customers.map((c) => c.id);
+    if (ids.length === 0) {
+      return { from, to, companyName: company?.name ?? null, rows: [], totals: { openingMnt: 0n, debitMnt: 0n, creditMnt: 0n, closingMnt: 0n } };
+    }
+
+    // Хоёр багц query — харилцагч бүрд тусад нь хандахгүй (N+1-ээс сэргийлнэ).
+    const [openings, moves] = await Promise.all([
+      // Мужийн өмнөх СҮҮЛЧИЙН үлдэгдэл (DISTINCT ON — Postgres)
+      this.prisma.$queryRaw<{ customer_id: string; balance_after_mnt: bigint }[]>`
+        SELECT DISTINCT ON (customer_id) customer_id, balance_after_mnt
+        FROM customer_transaction
+        WHERE customer_id = ANY(${ids}) AND created_at < ${start}
+        ORDER BY customer_id, created_at DESC`,
+      this.prisma.$queryRaw<{ customer_id: string; debit: bigint; credit: bigint; cnt: bigint }[]>`
+        SELECT customer_id,
+               COALESCE(SUM(CASE WHEN amount_mnt > 0 THEN amount_mnt ELSE 0 END), 0)::bigint  AS debit,
+               COALESCE(SUM(CASE WHEN amount_mnt < 0 THEN -amount_mnt ELSE 0 END), 0)::bigint AS credit,
+               COUNT(*)::bigint AS cnt
+        FROM customer_transaction
+        WHERE customer_id = ANY(${ids}) AND created_at >= ${start} AND created_at < ${end}
+        GROUP BY customer_id`,
+    ]);
+    const openBy = new Map(openings.map((o) => [o.customer_id, BigInt(o.balance_after_mnt ?? 0)]));
+    const moveBy = new Map(moves.map((m) => [m.customer_id, m]));
+
+    const rows = customers
+      .map((c) => {
+        const openingMnt = openBy.get(c.id) ?? 0n;
+        const m = moveBy.get(c.id);
+        const debitMnt = BigInt(m?.debit ?? 0);
+        const creditMnt = BigInt(m?.credit ?? 0);
+        return {
+          partyId: c.id,
+          code: c.code,
+          name: c.name,
+          regNo: c.regNo,
+          phone: c.phone,
+          openingMnt,
+          debitMnt,
+          creditMnt,
+          closingMnt: ledgerClosing(openingMnt, debitMnt, creditMnt),
+          txnCount: Number(m?.cnt ?? 0),
+        };
+      })
+      // Мужид хөдөлгөөнгүй бөгөөд үлдэгдэлгүй харилцагчийг тайланд оруулахгүй
+      .filter((r) => r.txnCount > 0 || r.openingMnt !== 0n || r.closingMnt !== 0n);
+
+    const totals = rows.reduce(
+      (a, r) => ({
+        openingMnt: a.openingMnt + r.openingMnt,
+        debitMnt: a.debitMnt + r.debitMnt,
+        creditMnt: a.creditMnt + r.creditMnt,
+        closingMnt: a.closingMnt + r.closingMnt,
+      }),
+      { openingMnt: 0n, debitMnt: 0n, creditMnt: 0n, closingMnt: 0n },
+    );
+    return { from, to, companyName: company?.name ?? null, rows, totals };
   }
 
   /** Авлагын насжилт (AR aging) — харилцагч бүрийн барагдаагүй авлагыг наснаар (FIFO) бүлэглэнэ. */

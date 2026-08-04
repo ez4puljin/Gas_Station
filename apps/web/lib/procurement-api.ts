@@ -1,4 +1,5 @@
 import { apiFetch } from './api';
+import type { AccountRegister } from './customers-api';
 
 // ── Нийлүүлэгч (Supplier) + өглөг (AP) ──
 export interface Supplier {
@@ -146,6 +147,8 @@ export const procurementApi = {
     apiFetch<{ items: SupplierTxn[]; total: number }>(`/suppliers/${id}/transactions`),
   supplierLedger: (id: string, from: string, to: string) =>
     apiFetch<SupplierLedger>(`/suppliers/${id}/ledger?from=${from}&to=${to}`),
+  supplierRegister: (from: string, to: string) =>
+    apiFetch<AccountRegister>(`/suppliers/register?from=${from}&to=${to}`),
   pay: (id: string, body: unknown) =>
     apiFetch(`/suppliers/${id}/payments`, { method: 'POST', body: JSON.stringify(body) }),
   adjust: (id: string, body: unknown) =>

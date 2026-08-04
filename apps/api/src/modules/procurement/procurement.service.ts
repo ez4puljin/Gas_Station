@@ -4,6 +4,7 @@ import {
   computeAging,
   type CreatePurchaseInput,
   type CreateSupplierInput,
+  ledgerClosing,
   lineTotalMnt,
   milliToDecimalString,
   type PurchaseListQuery,
@@ -368,6 +369,78 @@ export class ProcurementService {
         isActive: s.isActive,
       })),
     };
+  }
+
+  /**
+   * Нийлүүлэгчийн тооцооны НЭГДСЭН БҮРТГЭЛ — нягтлангийн үндсэн тайлан.
+   * Нийлүүлэгч бүрээр: Эхний үлдэгдэл · мужийн Дебет/Кредит · Эцсийн үлдэгдэл.
+   * Эхний = мужийн ӨМНӨХ сүүлчийн `balanceAfterMnt`; эцсийн = эхний + дебет − кредит (§12).
+   */
+  async register(user: AuthUser, from: string, to: string) {
+    const start = new Date(`${from}T00:00:00+08:00`);
+    const end = new Date(new Date(`${to}T00:00:00+08:00`).getTime() + 24 * 3600 * 1000);
+    const [company, suppliers] = await Promise.all([
+      this.prisma.company.findUnique({ where: { id: user.companyId }, select: { name: true } }),
+      this.prisma.supplier.findMany({
+        where: { companyId: user.companyId, deletedAt: null },
+        select: { id: true, name: true, regNo: true, phone: true },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+    const ids = suppliers.map((s) => s.id);
+    if (ids.length === 0) {
+      return { from, to, companyName: company?.name ?? null, rows: [], totals: { openingMnt: 0n, debitMnt: 0n, creditMnt: 0n, closingMnt: 0n } };
+    }
+
+    const [openings, moves] = await Promise.all([
+      this.prisma.$queryRaw<{ supplier_id: string; balance_after_mnt: bigint }[]>`
+        SELECT DISTINCT ON (supplier_id) supplier_id, balance_after_mnt
+        FROM supplier_transaction
+        WHERE supplier_id = ANY(${ids}) AND created_at < ${start}
+        ORDER BY supplier_id, created_at DESC`,
+      this.prisma.$queryRaw<{ supplier_id: string; debit: bigint; credit: bigint; cnt: bigint }[]>`
+        SELECT supplier_id,
+               COALESCE(SUM(CASE WHEN amount_mnt > 0 THEN amount_mnt ELSE 0 END), 0)::bigint  AS debit,
+               COALESCE(SUM(CASE WHEN amount_mnt < 0 THEN -amount_mnt ELSE 0 END), 0)::bigint AS credit,
+               COUNT(*)::bigint AS cnt
+        FROM supplier_transaction
+        WHERE supplier_id = ANY(${ids}) AND created_at >= ${start} AND created_at < ${end}
+        GROUP BY supplier_id`,
+    ]);
+    const openBy = new Map(openings.map((o) => [o.supplier_id, BigInt(o.balance_after_mnt ?? 0)]));
+    const moveBy = new Map(moves.map((m) => [m.supplier_id, m]));
+
+    const rows = suppliers
+      .map((s) => {
+        const openingMnt = openBy.get(s.id) ?? 0n;
+        const m = moveBy.get(s.id);
+        const debitMnt = BigInt(m?.debit ?? 0);
+        const creditMnt = BigInt(m?.credit ?? 0);
+        return {
+          partyId: s.id,
+          code: null as string | null,
+          name: s.name,
+          regNo: s.regNo,
+          phone: s.phone,
+          openingMnt,
+          debitMnt,
+          creditMnt,
+          closingMnt: ledgerClosing(openingMnt, debitMnt, creditMnt),
+          txnCount: Number(m?.cnt ?? 0),
+        };
+      })
+      .filter((r) => r.txnCount > 0 || r.openingMnt !== 0n || r.closingMnt !== 0n);
+
+    const totals = rows.reduce(
+      (a, r) => ({
+        openingMnt: a.openingMnt + r.openingMnt,
+        debitMnt: a.debitMnt + r.debitMnt,
+        creditMnt: a.creditMnt + r.creditMnt,
+        closingMnt: a.closingMnt + r.closingMnt,
+      }),
+      { openingMnt: 0n, debitMnt: 0n, creditMnt: 0n, closingMnt: 0n },
+    );
+    return { from, to, companyName: company?.name ?? null, rows, totals };
   }
 
   /** Өглөгийн насжилт (AP aging) — нийлүүлэгч бүрийн барагдаагүй өглөгийг наснаар (FIFO) бүлэглэнэ. */

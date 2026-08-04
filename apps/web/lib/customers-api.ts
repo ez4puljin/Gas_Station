@@ -97,4 +97,27 @@ export const customersApi = {
   adjust: (id: string, body: unknown) =>
     apiFetch(`/customers/${id}/adjustments`, { method: 'POST', body: JSON.stringify(body) }),
   receivables: () => apiFetch<Receivables>('/customers/receivables'),
+  register: (from: string, to: string) =>
+    apiFetch<AccountRegister>(`/customers/register?from=${from}&to=${to}`),
 };
+
+/** Тооцооны нэгдсэн бүртгэлийн нэг тал (харилцагч эсвэл нийлүүлэгч). */
+export interface AccountRegisterRow {
+  partyId: string;
+  code: string | null;
+  name: string;
+  regNo: string | null;
+  phone: string | null;
+  openingMnt: string;
+  debitMnt: string;
+  creditMnt: string;
+  closingMnt: string;
+  txnCount: number;
+}
+export interface AccountRegister {
+  from: string;
+  to: string;
+  companyName: string | null;
+  rows: AccountRegisterRow[];
+  totals: { openingMnt: string; debitMnt: string; creditMnt: string; closingMnt: string };
+}

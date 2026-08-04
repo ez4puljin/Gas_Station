@@ -52,6 +52,16 @@ export class CustomersController {
     return this.customers.aging(user, q.asOf);
   }
 
+  /** Тооцооны нэгдсэн бүртгэл — бүх харилцагч × эхний/дебет/кредит/эцсийн. '/:id'-ээс ӨМНӨ. */
+  @Get('register')
+  @Roles(RoleKey.ACCOUNTANT, RoleKey.STATION_MANAGER)
+  register(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(z.object({ from: z.string(), to: z.string() }))) q: { from: string; to: string },
+  ) {
+    return this.customers.register(user, q.from, q.to);
+  }
+
   @Get(':id')
   @Roles(RoleKey.CASHIER, RoleKey.SHIFT_SUPERVISOR, RoleKey.STATION_MANAGER, RoleKey.ACCOUNTANT)
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
