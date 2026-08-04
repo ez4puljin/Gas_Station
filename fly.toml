@@ -1,0 +1,35 @@
+# Fly.io — Шатахуун ERP API (NestJS + Socket.IO).
+# Deploy:  fly launch --no-deploy   →  fly secrets set ...  →  fly deploy
+# Build context нь энэ файлын байрлал (репогийн үндэс) — Dockerfile нь packages/ болон
+# pnpm-workspace.yaml-ыг хуулдаг тул үндсээс build хийх ЗААВАЛ шаардлагатай.
+
+app = "fuel-api"
+primary_region = "nrt" # Tokyo — Монголд хамгийн ойр
+
+[build]
+  dockerfile = "apps/api/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "4000"
+  LOG_LEVEL = "info"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  # POS систем — унтраахгүй. Cold start нь түгээгчийг хүлээлгэнэ, мөн Socket.IO-ийн
+  # тогтмол холболт тасарна.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
