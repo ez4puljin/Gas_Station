@@ -3,24 +3,31 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { BookOpen, CheckCircle2, FileText, Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  BookOpen,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Plus,
+  RotateCcw,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { Portal } from '@/components/portal';
+import { defaultRange, ReportFilters } from '@/components/report-filters';
 import { formatMnt } from '@fuel/schemas';
 import { ACCOUNT_TYPE_LABEL, type AccountType, JOURNAL_SOURCE_LABEL } from '@fuel/types';
 import { ApiException, tokenStore } from '@/lib/api';
-import { type Account, accountingApi, type JournalEntry } from '@/lib/accounting-api';
+import { type Account, accountingApi, type JournalEntry, type TrialBalance } from '@/lib/accounting-api';
 
-function monthRange() {
-  const ub = new Date(Date.now() + 8 * 3600 * 1000);
-  return {
-    from: new Date(Date.UTC(ub.getUTCFullYear(), ub.getUTCMonth(), 1)).toISOString().slice(0, 10),
-    to: ub.toISOString().slice(0, 10),
-  };
-}
-const toB = (s: string) => {
-  try { return BigInt(s || '0'); } catch { return 0n; }
+const toB = (s: string | bigint) => {
+  try { return typeof s === 'bigint' ? s : BigInt(s || '0'); } catch { return 0n; }
 };
+const cell = (v: bigint) => (v === 0n ? '' : formatMnt(v, { symbol: false }));
 
 interface DraftLine { key: string; accountCode: string; debit: string; credit: string; memo: string }
 let seq = 0;
@@ -33,41 +40,88 @@ export default function AccountingPage() {
   const [ready, setReady] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
-  const [range] = useState(monthRange());
+  const [tb, setTb] = useState<TrialBalance | null>(null);
+  const [range, setRange] = useState(defaultRange);
+  const [stationId, setStationId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  // journal form
-  const [jDate, setJDate] = useState(monthRange().to);
+  // харагдац
+  const [onlyMoved, setOnlyMoved] = useState(true);
+  const [jq, setJq] = useState('');
+  const [openEntry, setOpenEntry] = useState<string | null>(null);
+
+  // журналын маягт
+  const [jDate, setJDate] = useState(() => defaultRange().to);
   const [jMemo, setJMemo] = useState('');
   const [jLines, setJLines] = useState<DraftLine[]>([newLine(), newLine()]);
 
-  const reload = useCallback(async () => {
-    const [acc, ent] = await Promise.all([
+  const reload = useCallback(async (from: string, to: string, sid: string) => {
+    const f = { from, to, ...(sid ? { stationId: sid } : {}) };
+    const [acc, ent, trial] = await Promise.all([
       accountingApi.accounts(),
-      accountingApi.journal(range).catch(() => []),
+      accountingApi.journal(f).catch(() => []),
+      accountingApi.trialBalance(f).catch(() => null),
     ]);
-    setAccounts(acc);
-    setEntries(ent);
-  }, [range]);
+    setAccounts(acc); setEntries(ent); setTb(trial);
+  }, []);
 
   useEffect(() => {
     if (!tokenStore.access) { router.replace('/login'); return; }
-    reload()
+    reload(range.from, range.to, stationId)
       .catch((e) => { if (e instanceof ApiException && e.error.statusCode === 401) router.replace('/login'); else setError('Ачаалахад алдаа гарлаа'); })
       .finally(() => setReady(true));
-  }, [router, reload]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
+
+  useEffect(() => {
+    if (ready) void reload(range.from, range.to, stationId).catch(() => setError('Ачаалахад алдаа гарлаа'));
+  }, [ready, range, stationId, reload]);
 
   const postable = useMemo(() => accounts.filter((a) => a.isPostable && a.isActive), [accounts]);
-  const grouped = useMemo(() => {
-    const g: Record<string, Account[]> = {};
-    for (const a of accounts) (g[a.type] = g[a.type] ?? []).push(a);
-    return g;
-  }, [accounts]);
 
-  const totals = useMemo(() => {
+  /** Данс бүрийг мужийн гүйлгээтэй нь хослуулж, төрлөөр бүлэглэнэ. */
+  const groups = useMemo(() => {
+    const move = new Map((tb?.rows ?? []).map((r) => [r.code, r]));
+    const out: { type: AccountType; rows: (Account & { d: bigint; c: bigint })[]; d: bigint; c: bigint }[] = [];
+    for (const t of TYPE_ORDER) {
+      const rows = accounts
+        .filter((a) => a.type === t)
+        .map((a) => {
+          const m = move.get(a.code);
+          return { ...a, d: toB(m?.debitMnt ?? '0'), c: toB(m?.creditMnt ?? '0') };
+        })
+        .filter((a) => (onlyMoved ? a.d !== 0n || a.c !== 0n : true));
+      if (rows.length === 0) continue;
+      out.push({
+        type: t,
+        rows,
+        d: rows.reduce((s, r) => s + r.d, 0n),
+        c: rows.reduce((s, r) => s + r.c, 0n),
+      });
+    }
+    return out;
+  }, [accounts, tb, onlyMoved]);
+
+  const filteredEntries = useMemo(() => {
+    const n = jq.trim().toLowerCase();
+    if (!n) return entries;
+    return entries.filter(
+      (e) =>
+        e.entryNo.toLowerCase().includes(n) ||
+        (e.memo ?? '').toLowerCase().includes(n) ||
+        e.lines.some((l) => `${l.account?.code} ${l.account?.name}`.toLowerCase().includes(n)),
+    );
+  }, [entries, jq]);
+
+  const journalTotal = useMemo(
+    () => filteredEntries.reduce((s, e) => s + e.lines.reduce((x, l) => x + toB(l.debitMnt), 0n), 0n),
+    [filteredEntries],
+  );
+
+  const draftTotals = useMemo(() => {
     let d = 0n, c = 0n;
     for (const l of jLines) { d += toB(l.debit); c += toB(l.credit); }
     return { d, c, balanced: d === c && d > 0n };
@@ -75,13 +129,13 @@ export default function AccountingPage() {
 
   async function setup() {
     setBusy(true); setError(null);
-    try { const r = await accountingApi.setup(); await reload(); setMsg(`Дансны төлөвлөгөө бэлэн (${r.created} данс)`); }
+    try { const r = await accountingApi.setup(); await reload(range.from, range.to, stationId); setMsg(`Дансны төлөвлөгөө бэлэн (${r.created} данс)`); }
     catch (e) { setError(e instanceof ApiException ? e.error.message : 'Алдаа'); } finally { setBusy(false); }
   }
 
   async function submitJournal() {
     const lines = jLines.filter((l) => l.accountCode && (toB(l.debit) > 0n || toB(l.credit) > 0n));
-    if (!totals.balanced || lines.length < 2) { setError('Нийт дебет = нийт кредит, дор хаяж 2 мөр'); return; }
+    if (!draftTotals.balanced || lines.length < 2) { setError('Нийт дебет = нийт кредит, дор хаяж 2 мөр'); return; }
     setBusy(true); setError(null);
     try {
       await accountingApi.createEntry({
@@ -89,13 +143,13 @@ export default function AccountingPage() {
         lines: lines.map((l) => ({ accountCode: l.accountCode, debitMnt: toB(l.debit) > 0n ? l.debit : undefined, creditMnt: toB(l.credit) > 0n ? l.credit : undefined, memo: l.memo || undefined })),
       });
       setCreating(false); setJMemo(''); setJLines([newLine(), newLine()]);
-      await reload(); setMsg('Журнал бичигдлээ');
+      await reload(range.from, range.to, stationId); setMsg('Журнал бичигдлээ');
     } catch (e) { setError(e instanceof ApiException ? e.error.message : 'Алдаа'); } finally { setBusy(false); }
   }
 
   async function reverse(id: string) {
     setBusy(true); setError(null);
-    try { await accountingApi.reverse(id); await reload(); setMsg('Журнал буцаагдлаа'); }
+    try { await accountingApi.reverse(id); await reload(range.from, range.to, stationId); setMsg('Журнал буцаагдлаа'); }
     catch (e) { setError(e instanceof ApiException ? e.error.message : 'Алдаа'); } finally { setBusy(false); }
   }
 
@@ -103,7 +157,7 @@ export default function AccountingPage() {
 
   return (
     <main className="mx-auto w-full max-w-[1700px] px-4 py-6">
-      <PageHeader icon={BookOpen} title="Нягтлан бодох бүртгэл" subtitle="Ерөнхий дэвтэр (GL) — дансны төлөвлөгөө, журнал, санхүүгийн тайлан">
+      <PageHeader icon={BookOpen} title="Нягтлан бодох бүртгэл" subtitle="Ерөнхий дэвтэр — гүйлгээний баланс ба журналын бүртгэл">
         <Link href="/reports/financial" className="inline-flex min-h-touch items-center gap-1.5 rounded-xl border bg-card px-3.5 text-sm font-medium shadow-sm transition hover:bg-accent">
           <FileText size={16} /> Санхүүгийн тайлан
         </Link>
@@ -113,6 +167,10 @@ export default function AccountingPage() {
           </button>
         )}
       </PageHeader>
+
+      {accounts.length > 0 && (
+        <ReportFilters range={range} onRange={setRange} stationId={stationId} onStation={setStationId} />
+      )}
 
       {error && !creating && <p className="mb-4 rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       {msg && <p className="mb-4 inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/15 px-3 py-2 text-sm text-emerald-700"><CheckCircle2 size={15} /> {msg}</p>}
@@ -126,64 +184,138 @@ export default function AccountingPage() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[460px_1fr]">
-          {/* Дансны төлөвлөгөө */}
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,560px)_1fr]">
+          {/* ── Гүйлгээний баланс (дансны төлөвлөгөө + мужийн гүйлгээ) ── */}
           <section className="rounded-2xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold">Дансны төлөвлөгөө ({accounts.length})</h2>
-            <div className="max-h-[70vh] space-y-3 overflow-auto pr-1">
-              {TYPE_ORDER.map((t) => (grouped[t] ?? []).length > 0 && (
-                <div key={t}>
-                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">{ACCOUNT_TYPE_LABEL[t]}</div>
-                  <table className="w-full text-sm">
-                    <tbody>
-                      {(grouped[t] ?? []).map((a) => (
-                        <tr key={a.id} className={a.isPostable ? '' : 'font-semibold'}>
-                          <td className="w-16 py-0.5 pr-2 font-mono text-xs text-muted-foreground">{a.code}</td>
-                          <td className={`py-0.5 ${a.isPostable ? 'pl-2' : ''}`}>{a.name}{!a.isActive && <span className="ml-1 text-xs text-muted-foreground">(идэвхгүй)</span>}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">Гүйлгээний баланс</h2>
+              <div className="flex items-center gap-2">
+                {tb && (
+                  tb.balanced ? (
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                      <CheckCircle2 size={12} /> Тэнцсэн
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
+                      <AlertTriangle size={12} /> Тэнцээгүй
+                    </span>
+                  )
+                )}
+                <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <input type="checkbox" checked={onlyMoved} onChange={(e) => setOnlyMoved(e.target.checked)} className="accent-primary" />
+                  Зөвхөн хөдөлгөөнтэй
+                </label>
+              </div>
+            </div>
+
+            <div className="max-h-[68vh] overflow-auto pr-1">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="border-b text-xs text-muted-foreground">
+                    <th className="w-14 py-1.5 text-left font-medium">Код</th>
+                    <th className="py-1.5 text-left font-medium">Дансны нэр</th>
+                    <th className="w-28 py-1.5 text-right font-medium">Дебет</th>
+                    <th className="w-28 py-1.5 text-right font-medium">Кредит</th>
+                  </tr>
+                </thead>
+                {groups.map((g) => (
+                  <tbody key={g.type}>
+                    <tr className="bg-muted/40">
+                      <td colSpan={2} className="py-1 pl-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {ACCOUNT_TYPE_LABEL[g.type]}
+                      </td>
+                      <td className="py-1 text-right text-xs font-semibold tabular-nums">{cell(g.d)}</td>
+                      <td className="py-1 text-right text-xs font-semibold tabular-nums">{cell(g.c)}</td>
+                    </tr>
+                    {g.rows.map((a) => (
+                      <tr key={a.id} className="border-b last:border-0">
+                        <td className="py-1 font-mono text-xs text-muted-foreground">{a.code}</td>
+                        <td className={`py-1 ${a.isPostable ? 'pl-2' : 'font-semibold'}`}>
+                          {a.name}
+                          {!a.isActive && <span className="ml-1 text-xs text-muted-foreground">(идэвхгүй)</span>}
+                        </td>
+                        <td className="py-1 text-right tabular-nums">{cell(a.d)}</td>
+                        <td className="py-1 text-right tabular-nums">{cell(a.c)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                ))}
+                {groups.length === 0 && (
+                  <tbody>
+                    <tr><td colSpan={4} className="py-8 text-center text-muted-foreground">Энэ мужид хөдөлгөөн алга</td></tr>
+                  </tbody>
+                )}
+                {tb && (
+                  <tfoot>
+                    <tr className="border-t-2 border-double font-semibold">
+                      <td colSpan={2} className="py-2">НИЙТ ДҮН</td>
+                      <td className="py-2 text-right tabular-nums">{cell(toB(tb.totalDebitMnt))}</td>
+                      <td className="py-2 text-right tabular-nums">{cell(toB(tb.totalCreditMnt))}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
             </div>
           </section>
 
-          {/* Сүүлийн журналууд */}
+          {/* ── Журналын бүртгэл ── */}
           <section className="rounded-2xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold">Журнал ({entries.length}) — {range.from} … {range.to}</h2>
-            <div className="max-h-[70vh] space-y-2 overflow-auto pr-1">
-              {entries.map((e) => {
-                const td = e.lines.reduce((s, l) => s + toB(l.debitMnt), 0n);
-                return (
-                  <div key={e.id} className="rounded-xl border bg-background/50 p-3">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <span className="font-mono text-xs font-semibold text-primary">{e.entryNo}</span>
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px]">{JOURNAL_SOURCE_LABEL[e.source as keyof typeof JOURNAL_SOURCE_LABEL] ?? e.source}</span>
-                      <span className="text-xs text-muted-foreground">{new Date(e.date).toLocaleDateString('mn-MN')}</span>
-                      {e.memo && <span className="text-sm">{e.memo}</span>}
-                      <span className="ml-auto text-sm font-semibold tabular-nums">{formatMnt(td)}</span>
-                      {!e.reversedId && e.source !== 'ADJUSTMENT' && (
-                        <button onClick={() => reverse(e.id)} disabled={busy} title="Буцаах" className="text-muted-foreground hover:text-destructive disabled:opacity-50"><RotateCcw size={14} /></button>
-                      )}
-                      {e.reversedId && <span className="text-[11px] text-muted-foreground">(буцаагдсан)</span>}
-                    </div>
-                    <table className="mt-1.5 w-full text-xs">
-                      <tbody>
-                        {e.lines.map((l) => (
-                          <tr key={l.id}>
-                            <td className="py-0.5 text-muted-foreground"><span className="font-mono">{l.account?.code}</span> {l.account?.name}</td>
-                            <td className="py-0.5 text-right tabular-nums">{toB(l.debitMnt) > 0n ? formatMnt(l.debitMnt, { symbol: false }) : ''}</td>
-                            <td className="py-0.5 text-right tabular-nums text-muted-foreground">{toB(l.creditMnt) > 0n ? formatMnt(l.creditMnt, { symbol: false }) : ''}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })}
-              {entries.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">Журнал алга</p>}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">
+                Журналын бүртгэл
+                <span className="ml-2 font-normal text-muted-foreground">{filteredEntries.length} бичилт</span>
+              </h2>
+              <label className="relative block w-56 max-w-full">
+                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input value={jq} onChange={(e) => setJq(e.target.value)} placeholder="Дугаар / данс / тайлбар" className="min-h-touch w-full rounded-xl border bg-background py-1.5 pl-9 pr-3 text-sm" />
+              </label>
             </div>
+
+            <div className="max-h-[68vh] overflow-auto pr-1">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="border-b text-xs text-muted-foreground">
+                    <th className="py-1.5 text-left font-medium">Огноо</th>
+                    <th className="py-1.5 text-left font-medium">Баримт</th>
+                    <th className="py-1.5 text-left font-medium">Эх сурвалж</th>
+                    <th className="py-1.5 text-left font-medium">Тайлбар</th>
+                    <th className="w-32 py-1.5 text-right font-medium">Дүн</th>
+                    <th className="w-8" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredEntries.map((e, i) => {
+                    const amt = e.lines.reduce((s, l) => s + toB(l.debitMnt), 0n);
+                    const open = openEntry === e.id;
+                    return (
+                      <EntryRow
+                        key={e.id}
+                        e={e}
+                        amt={amt}
+                        zebra={i % 2 === 1}
+                        open={open}
+                        onToggle={() => setOpenEntry(open ? null : e.id)}
+                        onReverse={() => reverse(e.id)}
+                        busy={busy}
+                      />
+                    );
+                  })}
+                  {filteredEntries.length === 0 && (
+                    <tr><td colSpan={6} className="py-10 text-center text-muted-foreground">{jq ? 'Хайлтад тохирох бичилт алга' : 'Энэ мужид журнал алга'}</td></tr>
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-double font-semibold">
+                    <td colSpan={4} className="py-2">НИЙТ ДҮН</td>
+                    <td className="py-2 text-right tabular-nums">{cell(journalTotal)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Мөр дээр <span className="font-medium">2 удаа дарж</span> журналын бичилтийн мөрүүдийг харна.
+            </p>
           </section>
         </div>
       )}
@@ -215,29 +347,108 @@ export default function AccountingPage() {
                             {postable.map((a) => <option key={a.id} value={a.code}>{a.code} {a.name}</option>)}
                           </select>
                         </td>
-                        <td className="py-1 px-1"><input inputMode="numeric" value={l.debit} onChange={(e) => setJLines((p) => p.map((x) => x.key === l.key ? { ...x, debit: e.target.value.replace(/[^\d]/g, ''), credit: '' } : x))} placeholder="0" className="min-h-touch w-28 rounded-lg border bg-background px-2 text-right text-sm" /></td>
-                        <td className="py-1 px-1"><input inputMode="numeric" value={l.credit} onChange={(e) => setJLines((p) => p.map((x) => x.key === l.key ? { ...x, credit: e.target.value.replace(/[^\d]/g, ''), debit: '' } : x))} placeholder="0" className="min-h-touch w-28 rounded-lg border bg-background px-2 text-right text-sm" /></td>
+                        <td className="px-1 py-1"><input inputMode="numeric" value={l.debit} onChange={(e) => setJLines((p) => p.map((x) => x.key === l.key ? { ...x, debit: e.target.value.replace(/[^\d]/g, ''), credit: '' } : x))} placeholder="0" className="min-h-touch w-28 rounded-lg border bg-background px-2 text-right text-sm" /></td>
+                        <td className="px-1 py-1"><input inputMode="numeric" value={l.credit} onChange={(e) => setJLines((p) => p.map((x) => x.key === l.key ? { ...x, credit: e.target.value.replace(/[^\d]/g, ''), debit: '' } : x))} placeholder="0" className="min-h-touch w-28 rounded-lg border bg-background px-2 text-right text-sm" /></td>
                         <td className="py-1">{jLines.length > 2 && <button onClick={() => setJLines((p) => p.filter((x) => x.key !== l.key))} className="text-muted-foreground hover:text-destructive"><Trash2 size={14} /></button>}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="border-t font-semibold"><td className="py-1.5">Нийт</td>
-                      <td className="py-1.5 text-right tabular-nums">{formatMnt(totals.d, { symbol: false })}</td>
-                      <td className="py-1.5 text-right tabular-nums">{formatMnt(totals.c, { symbol: false })}</td><td /></tr>
+                      <td className="py-1.5 text-right tabular-nums">{formatMnt(draftTotals.d, { symbol: false })}</td>
+                      <td className="py-1.5 text-right tabular-nums">{formatMnt(draftTotals.c, { symbol: false })}</td><td /></tr>
                   </tfoot>
                 </table>
                 <button onClick={() => setJLines((p) => [...p, newLine()])} className="inline-flex items-center gap-1.5 rounded-xl border border-dashed px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"><Plus size={14} /> Мөр нэмэх</button>
-                <p className={`text-sm ${totals.balanced ? 'text-emerald-600' : 'text-amber-600'}`}>{totals.balanced ? '✓ Тэнцсэн' : `Зөрүү: ${formatMnt(totals.d - totals.c)}`}</p>
+                <p className={`text-sm ${draftTotals.balanced ? 'text-emerald-600' : 'text-amber-600'}`}>{draftTotals.balanced ? '✓ Тэнцсэн' : `Зөрүү: ${formatMnt(draftTotals.d - draftTotals.c)}`}</p>
               </div>
               <div className="flex justify-end gap-2 border-t px-5 py-4">
                 <button onClick={() => setCreating(false)} className="min-h-touch rounded-xl border px-4 text-sm font-medium hover:bg-accent">Болих</button>
-                <button onClick={submitJournal} disabled={busy || !totals.balanced} className="inline-flex min-h-touch items-center gap-1.5 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:brightness-105 disabled:opacity-50">Бичих</button>
+                <button onClick={submitJournal} disabled={busy || !draftTotals.balanced} className="inline-flex min-h-touch items-center gap-1.5 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:brightness-105 disabled:opacity-50">Бичих</button>
               </div>
             </div>
           </div>
         </Portal>
       )}
     </main>
+  );
+}
+
+/** Журналын нэг бичилт — 2 дарахад мөрүүд задарна. */
+function EntryRow({
+  e, amt, zebra, open, onToggle, onReverse, busy,
+}: {
+  e: JournalEntry;
+  amt: bigint;
+  zebra: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onReverse: () => void;
+  busy: boolean;
+}) {
+  return (
+    <>
+      <tr
+        onDoubleClick={onToggle}
+        title="Мөрүүдийг харах (2 удаа дарна)"
+        className={`cursor-pointer border-b transition hover:bg-accent/50 ${zebra ? 'bg-muted/25' : ''} ${open ? 'bg-accent/60' : ''}`}
+      >
+        <td className="whitespace-nowrap py-1.5 text-muted-foreground">{new Date(e.date).toLocaleDateString('mn-MN', { timeZone: 'Asia/Ulaanbaatar' })}</td>
+        <td className="py-1.5">
+          <span className="inline-flex items-center gap-1">
+            {open ? <ChevronDown size={12} className="shrink-0 text-primary" /> : <ChevronRight size={12} className="shrink-0 text-muted-foreground" />}
+            <span className="font-mono text-xs font-semibold text-primary">{e.entryNo}</span>
+          </span>
+        </td>
+        <td className="py-1.5">
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px]">
+            {JOURNAL_SOURCE_LABEL[e.source as keyof typeof JOURNAL_SOURCE_LABEL] ?? e.source}
+          </span>
+        </td>
+        <td className="py-1.5">
+          {e.memo}
+          {e.reversedId && <span className="ml-1 text-[11px] text-muted-foreground">(буцаагдсан)</span>}
+        </td>
+        <td className="py-1.5 text-right font-medium tabular-nums">{cell(amt)}</td>
+        <td className="py-1.5 text-right">
+          {!e.reversedId && e.source !== 'ADJUSTMENT' && (
+            <button onClick={onReverse} disabled={busy} title="Буцаах" className="text-muted-foreground hover:text-destructive disabled:opacity-50">
+              <RotateCcw size={13} />
+            </button>
+          )}
+        </td>
+      </tr>
+      {open && (
+        <tr className="border-b bg-muted/30">
+          <td />
+          <td colSpan={5} className="py-2 pr-2">
+            <div className="rounded-lg border bg-card p-2">
+              <table className="w-full text-xs">
+                <thead className="text-left text-muted-foreground">
+                  <tr>
+                    <th className="px-1 py-0.5 font-medium">Данс</th>
+                    <th className="px-1 py-0.5 font-medium">Тайлбар</th>
+                    <th className="px-1 py-0.5 text-right font-medium">Дебет</th>
+                    <th className="px-1 py-0.5 text-right font-medium">Кредит</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {e.lines.map((l) => (
+                    <tr key={l.id} className="border-t">
+                      <td className="px-1 py-0.5">
+                        <span className="font-mono text-muted-foreground">{l.account?.code}</span> {l.account?.name}
+                      </td>
+                      <td className="px-1 py-0.5 text-muted-foreground">{l.memo ?? ''}</td>
+                      <td className="px-1 py-0.5 text-right tabular-nums">{cell(toB(l.debitMnt))}</td>
+                      <td className="px-1 py-0.5 text-right tabular-nums">{cell(toB(l.creditMnt))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
