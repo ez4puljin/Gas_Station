@@ -365,6 +365,31 @@ export class ShiftService {
     return result;
   }
 
+  /**
+   * Хаалтад ЮУГ ЗААВАЛ бөглөхийг буцаана — гар утасны дэлгэц үүнийг харуулж чиглүүлнэ.
+   * requestClose-ийн шалгалттай ИЖИЛ эх сурвалжийг ашиглана (UI ба сервер зөрөхгүй).
+   */
+  async closeRequirements(user: AuthUser, shiftId: string) {
+    const shift = await this.prisma.shift.findFirst({ where: { id: shiftId }, select: { id: true, stationId: true, status: true } });
+    if (!shift) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Ээлж олдсонгүй' });
+    await assertStationAccess(this.prisma, user, shift.stationId);
+    const exp = await this.expectedByMethod(this.prisma, shiftId);
+    const tankIds = await this.dispensedTankIds(this.prisma, shiftId);
+    const tanks = tankIds.length
+      ? await this.prisma.fuelTank.findMany({ where: { id: { in: tankIds } }, select: { id: true, code: true } })
+      : [];
+    return {
+      shiftId,
+      status: shift.status,
+      // Хөдөлгөөнтэй байсан хэлбэрүүд — тушаалт заавал зарлана
+      methods: [...exp.entries()]
+        .filter(([, amount]) => amount !== 0n)
+        .map(([method, expectedMnt]) => ({ method, label: PAYMENT_METHOD_LABEL[method], expectedMnt })),
+      // Түгээлт хийгдсэн савууд — хаалтын хэмжээ заавал
+      tanks,
+    };
+  }
+
   // ── Тухайн салбарын одоогийн (хаагдаагүй) ээлж ──────────
   async current(user: AuthUser, stationId: string) {
     await assertStationAccess(this.prisma, user, stationId);

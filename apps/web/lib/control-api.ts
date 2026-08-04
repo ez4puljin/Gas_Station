@@ -49,8 +49,17 @@ export interface Overview {
   pending: PendingShift[];
 }
 
+/** Хаалтад ЗААВАЛ бөглөх зүйлс — серверийн шалгалттай ижил эх сурвалж. */
+export interface CloseRequirements {
+  shiftId: string;
+  status: string;
+  methods: { method: string; label: string; expectedMnt: string }[];
+  tanks: { id: string; code: string }[];
+}
+
 export const controlApi = {
   overview: () => apiFetch<Overview>('/staff/overview'),
+  closeRequirements: (id: string) => apiFetch<CloseRequirements>(`/staff/shifts/${id}/close-requirements`),
   current: (stationId: string) =>
     apiFetch<ShiftFull | null>(`/staff/shifts/current?stationId=${encodeURIComponent(stationId)}`),
   tanks: (stationId: string) => apiFetch<TankLite[]>(`/stations/${stationId}/tanks`),

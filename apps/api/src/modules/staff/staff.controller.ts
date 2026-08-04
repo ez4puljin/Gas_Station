@@ -77,6 +77,12 @@ export class StaffController {
   }
 
   /** Ээлжийн Z-тайлан. */
+  // Хаалтад заавал бөглөх зүйлс (түгээгчийн гар утасны дэлгэц чиглүүлэхэд)
+  @Get('shifts/:id/close-requirements')
+  closeRequirements(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.shifts.closeRequirements(user, id);
+  }
+
   @Get('shifts/:id/z-report')
   zReport(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.shifts.zReport(user, id);

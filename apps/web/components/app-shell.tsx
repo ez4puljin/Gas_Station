@@ -122,9 +122,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
 
   const isLogin = pathname === '/login';
+  // Түгээгчийн гар утасны дэлгэц — бүрэн дэлгэц, админы цэсгүй (нэг үүрэгт зориулсан).
+  const isAttendant = pathname === '/attendant';
   // localStorage — зөвхөн client дээр. mount хүртэл chrome зураагүй (hydration таарна).
   const hasToken = mounted && !!tokenStore.access;
-  const showChrome = mounted && hasToken && !isLogin;
+  const showChrome = mounted && hasToken && !isLogin && !isAttendant;
 
   useEffect(() => setMounted(true), []);
 
