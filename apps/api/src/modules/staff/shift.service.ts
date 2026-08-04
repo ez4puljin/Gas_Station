@@ -6,7 +6,7 @@ import type {
   ShiftRejectInput,
   ShiftReportQuery,
 } from '@fuel/schemas';
-import { AuditAction, type AuthUser } from '@fuel/types';
+import { AuditAction, type AuthUser, PAYMENT_METHOD_LABEL } from '@fuel/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertStationAccess } from '../../common/utils/station-access';
 import { AuditService } from '../audit/audit.service';
@@ -55,6 +55,24 @@ export class ShiftService {
     for (const p of pays) m.set(p.method, p._sum.amountMnt ?? 0n);
     for (const r of refs) m.set(r.method, (m.get(r.method) ?? 0n) - (r._sum.amountMnt ?? 0n));
     return m;
+  }
+
+  /**
+   * Ээлжийн турш ТҮГЭЭЛТ хийгдсэн савуудын id — хаалтын тооллогод эдгээрийг заавал уншина.
+   * Түлшний борлуулалт бүр StockMovement (refType='sale') үүсгэдэг тул түүгээр олно.
+   */
+  private async dispensedTankIds(tx: Prisma.TransactionClient, shiftId: string): Promise<string[]> {
+    const saleIds = await tx.sale.findMany({
+      where: { shiftId, deletedAt: null, status: { not: SaleStatus.VOIDED } },
+      select: { id: true },
+    });
+    if (saleIds.length === 0) return [];
+    const moves = await tx.stockMovement.findMany({
+      where: { refType: 'sale', refId: { in: saleIds.map((s) => s.id) }, fuelTankId: { not: null } },
+      select: { fuelTankId: true },
+      distinct: ['fuelTankId'],
+    });
+    return moves.map((m) => m.fuelTankId).filter((x): x is string => !!x);
   }
 
   /** Савны хэмжээний tankId бүр тухайн салбарт харьяалагдахыг шалгана (§10 cross-tenant хаах). */
@@ -175,6 +193,30 @@ export class ShiftService {
       }
       await this.assertTanks(tx, shift.stationId, input.tankReadings.map((r) => r.tankId));
       const exp = await this.expectedByMethod(tx, shiftId);
+      // ЗААВАЛ ТУЛГАЛТ — хөдөлгөөнтэй байсан төлбөрийн хэлбэр бүрд тушаалт заавал зарлана
+      // (0 гэж зарлаж болно, ГЭХДЭЭ ил тод зарлах ёстой). Үүнгүйгээр тооллогогүй хааж,
+      // кассын зөрүү илрэхгүй өнгөрдөг байв.
+      const declared = new Set(input.tenders.map((t) => t.method));
+      const missing = [...exp.entries()]
+        .filter(([m, amount]) => amount !== 0n && !declared.has(m))
+        .map(([m]) => PAYMENT_METHOD_LABEL[m]);
+      if (missing.length > 0) {
+        throw new BadRequestException({
+          code: 'TENDER_DECLARATION_REQUIRED',
+          message: `Тушаалт заавал зарлана: ${missing.join(', ')}`,
+        });
+      }
+      // Ээлжийн турш ТҮГЭЭСЭН сав бүрд хаалтын хэмжээ заавал (тооллого).
+      const usedTankIds = await this.dispensedTankIds(tx, shiftId);
+      const readTankIds = new Set(input.tankReadings.map((r) => r.tankId));
+      const missingTanks = usedTankIds.filter((id) => !readTankIds.has(id));
+      if (missingTanks.length > 0) {
+        const tanks = await tx.fuelTank.findMany({ where: { id: { in: missingTanks } }, select: { code: true } });
+        throw new BadRequestException({
+          code: 'TANK_READING_REQUIRED',
+          message: `Савны хаалтын хэмжээ заавал: ${tanks.map((t) => t.code).join(', ')}`,
+        });
+      }
       // Тушаалт = хэлбэр тус бүрээр declared vs expected (хүсэлт давтагдвал дахин бичнэ)
       const methods = new Set<PaymentMethod>([...exp.keys(), ...input.tenders.map((t) => t.method)]);
       await tx.shiftTender.deleteMany({ where: { shiftId } });

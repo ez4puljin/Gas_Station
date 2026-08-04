@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ import {
   type FuelGradeCode,
   PAYMENT_METHOD_LABEL,
   PaymentMethod,
+  RoleKey,
   SaleItemType,
   SaleStatus,
   StockMovementType,
@@ -100,11 +102,25 @@ export class PosService {
         // 1) Нээлттэй ээлж шаардлагатай (§7.1)
         const shift = await tx.shift.findFirst({
           where: { id: input.shiftId, stationId: input.stationId, status: 'OPEN' },
+          include: { cashiers: { select: { employeeId: true } } },
         });
         if (!shift) {
           throw new BadRequestException({
             code: 'SHIFT_NOT_OPEN',
             message: 'Нээлттэй ээлж олдсонгүй. Эхлээд ээлж нээнэ үү',
+          });
+        }
+        // Зөвхөн ЭЭЛЖИЙН ТҮГЭЭГЧ борлуулна — нэг салбарт нэг л түгээгч ажиллана.
+        // Үүнгүйгээр өөр хүн бусдын ээлж дээр зарж, кассын хариуцлага буруу хүнд ногдоно.
+        // Менежер/админ/эзэмшигч онцгой тохиолдолд хийж болно (audit-д actor нь бичигдэнэ).
+        const isShiftAttendant = shift.cashiers.some((c) => c.employeeId === user.employeeId);
+        const elevated = user.roles.some(
+          (r) => r === RoleKey.STATION_MANAGER || r === RoleKey.ADMIN || r === RoleKey.OWNER,
+        );
+        if (!isShiftAttendant && !elevated) {
+          throw new ForbiddenException({
+            code: 'NOT_SHIFT_ATTENDANT',
+            message: 'Энэ ээлж өөр түгээгчийнх байна. Өөрийн ээлжээ нээлгэнэ үү',
           });
         }
 
