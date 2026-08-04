@@ -85,11 +85,12 @@ export default function PayrollPage() {
                 <Stat label="НДШ (ажилтан)" value={formatMnt(t.employeeNdshMnt)} cls="text-amber-600" />
                 <Stat label="ХХОАТ" value={formatMnt(t.pitMnt)} cls="text-amber-600" />
                 <Stat label="НДШ (ажил олгогч)" value={formatMnt(t.employerNdshMnt)} />
+                {BigInt(t.deductionMnt) > 0n && <Stat label="Кассын суутгал" value={formatMnt(t.deductionMnt)} cls="text-destructive" />}
                 <Stat label="Гарт олгох (net)" value={formatMnt(t.netMnt)} cls="text-emerald-600" />
               </div>
             )}
             <table className="w-full text-sm">
-              <thead><tr className="border-b text-left text-xs uppercase text-muted-foreground"><th className="py-2 font-medium">Ажилтан</th><th className="py-2 text-right font-medium">Цалин</th><th className="py-2 text-right font-medium">НДШ</th><th className="py-2 text-right font-medium">ХХОАТ</th><th className="py-2 text-right font-medium">Гарт</th></tr></thead>
+              <thead><tr className="border-b text-left text-xs uppercase text-muted-foreground"><th className="py-2 font-medium">Ажилтан</th><th className="py-2 text-right font-medium">Цалин</th><th className="py-2 text-right font-medium">НДШ</th><th className="py-2 text-right font-medium">ХХОАТ</th><th className="py-2 text-right font-medium">Кассын суутгал</th><th className="py-2 text-right font-medium">Гарт</th></tr></thead>
               <tbody>
                 {preview?.items.map((i) => (
                   <tr key={i.employeeId} className="border-b">
@@ -97,10 +98,11 @@ export default function PayrollPage() {
                     <td className="py-1.5 text-right tabular-nums">{formatMnt(i.grossMnt, { symbol: false })}</td>
                     <td className="py-1.5 text-right tabular-nums text-muted-foreground">{formatMnt(i.employeeNdshMnt, { symbol: false })}</td>
                     <td className="py-1.5 text-right tabular-nums text-muted-foreground">{formatMnt(i.pitMnt, { symbol: false })}</td>
+                    <td className={`py-1.5 text-right tabular-nums ${BigInt(i.deductionMnt) > 0n ? 'text-destructive' : 'text-muted-foreground'}`}>{BigInt(i.deductionMnt) > 0n ? formatMnt(i.deductionMnt, { symbol: false }) : '—'}</td>
                     <td className="py-1.5 text-right font-medium tabular-nums">{formatMnt(i.netMnt, { symbol: false })}</td>
                   </tr>
                 ))}
-                {(!preview || preview.items.length === 0) && <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">Цалинтай идэвхтэй ажилтан алга — &quot;Ажилтны цалин&quot;-аас тохируулна уу</td></tr>}
+                {(!preview || preview.items.length === 0) && <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">Цалинтай идэвхтэй ажилтан алга — &quot;Ажилтны цалин&quot;-аас тохируулна уу</td></tr>}
               </tbody>
             </table>
           </section>

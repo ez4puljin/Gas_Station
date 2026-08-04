@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { computePayroll, type RunPayrollInput, type SetSalaryInput } from '@fuel/schemas';
+import { allocateDeductions, computePayroll, type RunPayrollInput, type SetSalaryInput } from '@fuel/schemas';
 import { AuditAction, type AuthUser, JournalSource, STD_ACCOUNT } from '@fuel/types';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { AccountingService } from '../accounting/accounting.service';
+import { AccountingService, type PostLine } from '../accounting/accounting.service';
 import { AuditService } from '../audit/audit.service';
+import { CashAccountabilityService } from '../cash-accountability/cash-accountability.service';
 
 interface ComputedItem {
   employeeId: string;
@@ -17,6 +19,12 @@ interface ComputedItem {
   netMnt: bigint;
 }
 
+/** Кассын дутагдлын суутгал хэрэглэсэн мөр — `netMnt` нь суутгалын ДАРААХ гарт олгох дүн. */
+interface DeductedItem extends ComputedItem {
+  deductionMnt: bigint;
+  netBeforeDeductionMnt: bigint;
+}
+
 /**
  * Цалин — сарын тооцоо: НДШ/ХХОАТ суутгал (computePayroll) + GL-д бичих.
  * GL: Дт цалин зардал (7100) + НДШ зардал (7110) = Кт цалингийн өглөг (3300) + татварын өглөг (3310).
@@ -28,6 +36,7 @@ export class PayrollService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly accounting: AccountingService,
+    private readonly cashCases: CashAccountabilityService,
   ) {}
 
   // ── Ажилтны цалин ──
@@ -80,23 +89,39 @@ export class PayrollService {
     return items;
   }
 
-  private totals(items: ComputedItem[]) {
+  private totals(items: (ComputedItem & { deductionMnt?: bigint })[]) {
     return items.reduce(
       (a, i) => ({
         grossMnt: a.grossMnt + i.grossMnt,
         employeeNdshMnt: a.employeeNdshMnt + i.employeeNdshMnt,
         pitMnt: a.pitMnt + i.pitMnt,
         employerNdshMnt: a.employerNdshMnt + i.employerNdshMnt,
+        deductionMnt: a.deductionMnt + (i.deductionMnt ?? 0n),
         netMnt: a.netMnt + i.netMnt,
       }),
-      { grossMnt: 0n, employeeNdshMnt: 0n, pitMnt: 0n, employerNdshMnt: 0n, netMnt: 0n },
+      { grossMnt: 0n, employeeNdshMnt: 0n, pitMnt: 0n, employerNdshMnt: 0n, deductionMnt: 0n, netMnt: 0n },
     );
   }
 
-  /** Тооцоог урьдчилан харах (бичихгүй). */
+  /**
+   * Ажилтан тус бүрийн кассын дутагдлын суутгалыг гарт олгох дүнгээс хэтрэхгүйгээр хуваарилна.
+   * Зөвхөн УНШИНА (хэргийг шинэчлэхгүй) — тиймээс preview-д ч, run-д ч ижил үр дүн.
+   */
+  private async withDeductions(tx: Prisma.TransactionClient, companyId: string, items: ComputedItem[]): Promise<DeductedItem[]> {
+    const out: DeductedItem[] = [];
+    for (const i of items) {
+      const cases = await this.cashCases.pendingDeductionsInTx(tx, companyId, i.employeeId);
+      const { totalMnt } = allocateDeductions(i.netMnt, cases);
+      out.push({ ...i, deductionMnt: totalMnt, netBeforeDeductionMnt: i.netMnt, netMnt: i.netMnt - totalMnt });
+    }
+    return out;
+  }
+
+  /** Тооцоог урьдчилан харах (бичихгүй) — кассын дутагдлын суутгал ч харагдана. */
   async preview(user: AuthUser, period: string) {
     const existing = await this.prisma.payrollRun.findUnique({ where: { companyId_period: { companyId: user.companyId, period } } });
-    const items = await this.computeFor(user);
+    const base = await this.computeFor(user);
+    const items = await this.withDeductions(this.prisma, user.companyId, base);
     return { period, posted: !!existing, items, totals: this.totals(items) };
   }
 
@@ -105,14 +130,27 @@ export class PayrollService {
     const existing = await this.prisma.payrollRun.findUnique({ where: { companyId_period: { companyId: user.companyId, period: input.period } } });
     if (existing) throw new BadRequestException({ code: 'PAYROLL_ALREADY_RUN', message: 'Энэ сарын цалин аль хэдийн тооцоологдсон' });
 
-    const items = await this.computeFor(user, input.bonuses);
-    if (items.length === 0) throw new BadRequestException({ code: 'NO_PAYROLL', message: 'Цалинтай идэвхтэй ажилтан алга' });
-    const t = this.totals(items);
+    const base = await this.computeFor(user, input.bonuses);
+    if (base.length === 0) throw new BadRequestException({ code: 'NO_PAYROLL', message: 'Цалинтай идэвхтэй ажилтан алга' });
     await this.accounting.ensureChartOfAccounts(user.companyId);
     const date = new Date(`${input.period}-01T00:00:00+08:00`);
 
     return this.prisma.$transaction(async (tx) => {
+      // Кассын дутагдлын суутгалыг эхлээд хуваарилна (гарт олгох дүнг тодорхойлно).
+      const items = await this.withDeductions(tx, user.companyId, base);
+      const t = this.totals(items);
       const taxPayable = t.employeeNdshMnt + t.employerNdshMnt + t.pitMnt;
+      // Дт 7100 нийт цалин + Дт 7110 ажил олгогчийн НДШ
+      //   = Кт 3300 гарт олгох + Кт 3310 татвар/шимтгэл + Кт 1210 кассын дутагдлын суутгал
+      const lines: PostLine[] = [
+        { accountCode: STD_ACCOUNT.WAGES, debitMnt: t.grossMnt },
+        { accountCode: STD_ACCOUNT.SOCIAL_INS_EXP, debitMnt: t.employerNdshMnt },
+        { accountCode: STD_ACCOUNT.PAYROLL_PAYABLE, creditMnt: t.netMnt },
+        { accountCode: STD_ACCOUNT.TAX_PAYABLE, creditMnt: taxPayable },
+      ];
+      if (t.deductionMnt > 0n) {
+        lines.push({ accountCode: STD_ACCOUNT.OTHER_RECEIVABLE, creditMnt: t.deductionMnt, memo: 'Кассын дутагдал суутгав' });
+      }
       const entry = await this.accounting.postJournalInTx(tx, {
         companyId: user.companyId,
         date,
@@ -120,12 +158,7 @@ export class PayrollService {
         memo: `Цалин ${input.period}`,
         refType: 'payroll',
         createdById: user.sub,
-        lines: [
-          { accountCode: STD_ACCOUNT.WAGES, debitMnt: t.grossMnt },
-          { accountCode: STD_ACCOUNT.SOCIAL_INS_EXP, debitMnt: t.employerNdshMnt },
-          { accountCode: STD_ACCOUNT.PAYROLL_PAYABLE, creditMnt: t.netMnt },
-          { accountCode: STD_ACCOUNT.TAX_PAYABLE, creditMnt: taxPayable },
-        ],
+        lines,
       });
       const payrollRun = await tx.payrollRun.create({
         data: {
@@ -135,6 +168,7 @@ export class PayrollService {
           employeeNdshMnt: t.employeeNdshMnt,
           pitMnt: t.pitMnt,
           employerNdshMnt: t.employerNdshMnt,
+          deductionMnt: t.deductionMnt,
           netMnt: t.netMnt,
           journalEntryId: entry.id,
           runById: user.sub,
@@ -147,11 +181,24 @@ export class PayrollService {
               employeeNdshMnt: i.employeeNdshMnt,
               pitMnt: i.pitMnt,
               employerNdshMnt: i.employerNdshMnt,
+              deductionMnt: i.deductionMnt,
               netMnt: i.netMnt,
             })),
           },
         },
       });
+      // Хэргүүдийг тухайн цалинтай холбож нөхөлтийг бүртгэнэ (ижил хуваарилалт — детерминистик).
+      for (const i of items) {
+        if (i.deductionMnt > 0n) {
+          await this.cashCases.applyDeductionsInTx(tx, {
+            companyId: user.companyId,
+            employeeId: i.employeeId,
+            availableNetMnt: i.netBeforeDeductionMnt,
+            payrollRunId: payrollRun.id,
+            actorId: user.sub,
+          });
+        }
+      }
       await this.audit.record(
         { actorId: user.sub, action: 'PAYROLL_RUN', entity: 'PayrollRun', entityId: payrollRun.id, after: { period: input.period, ...t, journalEntryId: entry.id }, ip },
         tx,
@@ -165,6 +212,14 @@ export class PayrollService {
     const run = await this.prisma.payrollRun.findFirst({ where: { id, companyId: user.companyId } });
     if (!run) throw new NotFoundException({ code: 'PAYROLL_NOT_FOUND', message: 'Цалингийн тооцоо олдсонгүй' });
     return this.prisma.$transaction(async (tx) => {
+      // Кассын дутагдлын суутгалыг эргүүлнэ — хэргүүд дахин хүлээгдэх төлөвт орно.
+      if (run.deductionMnt > 0n) {
+        const items = await tx.payrollItem.findMany({
+          where: { payrollRunId: run.id, deductionMnt: { gt: 0n } },
+          select: { employeeId: true, deductionMnt: true },
+        });
+        await this.cashCases.reverseDeductionsInTx(tx, run.id, items);
+      }
       if (run.journalEntryId) {
         const orig = await tx.journalEntry.findUnique({
           where: { id: run.journalEntryId },

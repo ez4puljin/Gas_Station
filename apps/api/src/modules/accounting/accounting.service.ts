@@ -177,16 +177,18 @@ export class AccountingService {
       if (!a.isPostable) throw new BadRequestException({ code: 'ACCOUNT_NOT_POSTABLE', message: `Бүлэг дансанд бичиж болохгүй: ${code}` });
     }
 
-    // Баримтын дугаар: JE-YYYY/MM/DD-0001 (компани дотор, өдрөөр).
-    const ymd = this.ubYmd(params.date);
-    const dayStart = new Date(`${ymd.replace(/\//g, '-')}T00:00:00+08:00`);
-    const dayEnd = new Date(dayStart.getTime() + 24 * 3600 * 1000);
-    // entryNo нь бизнесийн ОГНООгоор (date), бичсэн өдрөөр (createdAt) биш — буцаан огноолсон/
-    // дахин бичсэн бичилтэд давхцахгүй. deletedAt шүүхгүй (монотон дугаар; unique-д бүх мөр орно).
-    const seq = await tx.journalEntry.count({
-      where: { companyId: params.companyId, date: { gte: dayStart, lt: dayEnd } },
+    // Баримтын дугаар: JE-YYYY/MM/DD-0001 (компани дотор, бизнесийн ОГНООгоор — бичсэн өдрөөр биш,
+    // ингэснээр буцаан огноолсон бичилт давхцахгүй).
+    // Дугаарыг ТООЛЖ биш, тухайн өдрийн ХАМГИЙН ИХ дугаараас нэмнэ: устгал/цоорхой гарсан ч
+    // (эсвэл зэрэгцээ бичилтэд) давхцахгүй. Дараалал 4 оронтой тул текст эрэмбэ = тоон эрэмбэ.
+    const prefix = `JE-${this.ubYmd(params.date)}-`;
+    const last = await tx.journalEntry.findFirst({
+      where: { companyId: params.companyId, entryNo: { startsWith: prefix } },
+      orderBy: { entryNo: 'desc' },
+      select: { entryNo: true },
     });
-    const entryNo = `JE-${ymd}-${String(seq + 1).padStart(4, '0')}`;
+    const seq = last ? (Number.parseInt(last.entryNo.slice(prefix.length), 10) || 0) : 0;
+    const entryNo = `${prefix}${String(seq + 1).padStart(4, '0')}`;
 
     const entry = await tx.journalEntry.create({
       data: {

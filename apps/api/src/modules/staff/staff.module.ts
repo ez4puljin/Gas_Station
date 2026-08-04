@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CashAccountabilityModule } from '../cash-accountability/cash-accountability.module';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
 import { LeaveController } from './leave.controller';
@@ -12,6 +13,7 @@ import { StaffService } from './staff.service';
  * Ээлж нээх/хаах нь transaction + audit; хаахад бэлэн мөнгөний тооцоо (§2.3, §8).
  */
 @Module({
+  imports: [CashAccountabilityModule],
   controllers: [StaffController, AttendanceController, LeaveController],
   providers: [StaffService, ShiftService, AttendanceService, LeaveService],
   exports: [StaffService, ShiftService, AttendanceService, LeaveService],

@@ -207,6 +207,8 @@ export const AuditAction = {
   LEAVE_APPROVE: 'LEAVE_APPROVE',
   LEAVE_REJECT: 'LEAVE_REJECT',
   LEAVE_CANCEL: 'LEAVE_CANCEL',
+  CASH_CASE_OPEN: 'CASH_CASE_OPEN',
+  CASH_CASE_RESOLVE: 'CASH_CASE_RESOLVE',
   PERMISSION_CHANGE: 'PERMISSION_CHANGE',
   CUSTOMER_PAYMENT: 'CUSTOMER_PAYMENT',
   CUSTOMER_ADJUST: 'CUSTOMER_ADJUST',
@@ -320,6 +322,7 @@ export const STD_ACCOUNT = {
   BANK: '1110', // Харилцах данс
   SAFE: '1120', // Бэлэн мөнгө — сейф
   AR_TRADE: '1200', // Худалдааны авлага
+  OTHER_RECEIVABLE: '1210', // Бусад авлага (ажилтны кассын дутагдал г.м)
   INVENTORY_GOODS: '1300', // Бараа материал
   INVENTORY_FUEL: '1310', // Түлшний нөөц
   AP_TRADE: '3100', // Худалдааны өглөг

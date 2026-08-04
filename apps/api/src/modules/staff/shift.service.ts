@@ -10,6 +10,7 @@ import { AuditAction, type AuthUser } from '@fuel/types';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertStationAccess } from '../../common/utils/station-access';
 import { AuditService } from '../audit/audit.service';
+import { CashAccountabilityService } from '../cash-accountability/cash-accountability.service';
 import { RealtimeEvent, RealtimeGateway } from '../realtime/realtime.gateway';
 
 const shiftInclude = {
@@ -28,6 +29,7 @@ export class ShiftService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly realtime: RealtimeGateway,
+    private readonly cashCases: CashAccountabilityService,
   ) {}
 
   private emit(companyId: string, stationId: string, shiftId: string, status: string) {
@@ -227,7 +229,7 @@ export class ShiftService {
     let result;
     try {
       result = await this.prisma.$transaction(async (tx) => {
-        const shift = await tx.shift.findFirst({ where: { id: shiftId } });
+        const shift = await tx.shift.findFirst({ where: { id: shiftId }, include: { cashiers: true } });
         if (!shift) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Ээлж олдсонгүй' });
         await assertStationAccess(tx, user, shift.stationId);
         if (shift.status !== ShiftStatus.PENDING_CLOSE) {
@@ -252,11 +254,25 @@ export class ShiftService {
         const reconciliation = await tx.cashReconciliation.create({
           data: { shiftId, stationId: shift.stationId, expectedCashMnt, countedCashMnt: countedCash, varianceMnt, reconciledById: user.employeeId },
         });
+        // Зөрүү гарвал кассын хариуцлагын хэрэг + GL бичилт (дутагдал→авлага, илүүдэл→орлого).
+        // Хариуцагч = хаах хүсэлт илгээсэн, эс бөгөөс нээсэн/ээлжийн кассчин.
+        const responsibleId = shift.closeRequestedById ?? shift.openedById ?? shift.cashiers[0]?.employeeId ?? null;
+        const cashCase = responsibleId
+          ? await this.cashCases.openCaseInTx(tx, {
+              companyId: user.companyId,
+              stationId: shift.stationId,
+              shiftId,
+              employeeId: responsibleId,
+              varianceMnt,
+              actorId: user.sub,
+              ip,
+            })
+          : null;
         await this.audit.record(
-          { actorId: user.sub, action: AuditAction.SHIFT_CLOSE, entity: 'Shift', entityId: shiftId, before: shift, after: { approved: 'close', shift: updated, reconciliation }, stationId: shift.stationId, ip },
+          { actorId: user.sub, action: AuditAction.SHIFT_CLOSE, entity: 'Shift', entityId: shiftId, before: shift, after: { approved: 'close', shift: updated, reconciliation, cashCaseId: cashCase?.id ?? null }, stationId: shift.stationId, ip },
           tx,
         );
-        return { shift: updated, reconciliation };
+        return { shift: updated, reconciliation, cashCase };
       });
     } catch (err) {
       // CashReconciliation @unique(shiftId) — зэрэгцээ давхар батлалт (race)

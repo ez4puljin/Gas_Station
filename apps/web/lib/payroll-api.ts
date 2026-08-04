@@ -14,6 +14,8 @@ export interface PayrollTotals {
   employeeNdshMnt: string;
   pitMnt: string;
   employerNdshMnt: string;
+  /** Кассын дутагдлын суутгал (гарт олгохоос хасагдсан). */
+  deductionMnt: string;
   netMnt: string;
 }
 export interface PayrollLine {
@@ -25,6 +27,7 @@ export interface PayrollLine {
   employeeNdshMnt: string;
   pitMnt: string;
   employerNdshMnt: string;
+  deductionMnt: string;
   netMnt: string;
 }
 export interface PayrollPreview {

@@ -166,6 +166,19 @@ enum LeaveStatus {
   CANCELLED
 }
 
+enum CashCaseStatus {
+  OPEN // шийдвэрлээгүй (дутагдал — авлагад бүртгэгдсэн)
+  PENDING_DEDUCTION // цалингаас суутгахаар шийдсэн, цалин бодогдоогүй
+  RESOLVED // бүрэн шийдвэрлэсэн
+}
+
+enum CashCaseResolution {
+  RECOVERED_CASH // кассчин бэлнээр нөхсөн
+  DEDUCT_SALARY // цалингаас суутгах
+  WRITE_OFF // акт — компани хүлээв
+  OVERAGE_INCOME // илүүдэл → бусад орлого
+}
+
 // ─────────────────────────────────────────────────────────────
 // Байгууллага ба салбар
 // ─────────────────────────────────────────────────────────────
@@ -193,6 +206,7 @@ model Company {
   journalEntries JournalEntry[]
   payrollRuns    PayrollRun[]
   leaveRequests  LeaveRequest[]
+  cashCases      CashVarianceCase[]
 
   @@map("company")
 }
@@ -235,6 +249,7 @@ model Station {
   journalLines     JournalLine[]
   dailyCloses      DailyClose[]
   cashMovements    CashMovement[]
+  cashCases        CashVarianceCase[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -712,6 +727,7 @@ model Employee {
   shiftLinks    ShiftCashier[]
   payrollItems  PayrollItem[]
   leaveRequests LeaveRequest[]
+  cashCases     CashVarianceCase[]
 
   @@index([companyId])
   @@map("employee")
@@ -810,6 +826,7 @@ model Shift {
   tankReadings   ShiftTankReading[]
   tenders        ShiftTender[]
   reconciliation CashReconciliation?
+  cashCase       CashVarianceCase?
   refunds        Refund[]
 
   @@index([stationId, openedAt])
@@ -1273,7 +1290,8 @@ model PayrollRun {
   employeeNdshMnt BigInt        @map("employee_ndsh_mnt") // ажилтнаас суутгасан НДШ
   pitMnt          BigInt        @map("pit_mnt") // ХХОАТ
   employerNdshMnt BigInt        @map("employer_ndsh_mnt") // ажил олгогчийн НДШ
-  netMnt          BigInt        @map("net_mnt") // гарт олгох нийт
+  deductionMnt    BigInt        @default(0) @map("deduction_mnt") // кассын дутагдлын суутгал
+  netMnt          BigInt        @map("net_mnt") // гарт олгох нийт (суутгалын дараа)
   journalEntryId  String?       @map("journal_entry_id")
   runById         String        @map("run_by_id")
 
@@ -1299,6 +1317,7 @@ model PayrollItem {
   employeeNdshMnt BigInt @map("employee_ndsh_mnt")
   pitMnt          BigInt @map("pit_mnt")
   employerNdshMnt BigInt @map("employer_ndsh_mnt")
+  deductionMnt    BigInt @default(0) @map("deduction_mnt") // кассын дутагдлын суутгал
   netMnt          BigInt @map("net_mnt")
 
   run      PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
@@ -1307,6 +1326,42 @@ model PayrollItem {
   @@index([payrollRunId])
   @@index([employeeId])
   @@map("payroll_item")
+}
+
+/// Кассын зөрүүний хэрэг — ээлж хаахад зөрүү гарвал автоматаар үүсч, ажилтанд хариуцуулна.
+/// Дутагдал: Дт 1210 Бусад авлага / Кт 1100 Касс. Илүүдэл: Дт 1100 / Кт 5900 (шууд RESOLVED).
+model CashVarianceCase {
+  id           String              @id @default(cuid())
+  companyId    String              @map("company_id")
+  stationId    String              @map("station_id")
+  shiftId      String              @unique @map("shift_id") // нэг ээлжид нэг хэрэг
+  employeeId   String              @map("employee_id") // хариуцагч кассчин
+  varianceMnt  BigInt              @map("variance_mnt") // тоолсон − тооцоолсон (сөрөг = дутагдал)
+  amountMnt    BigInt              @map("amount_mnt") // абсолют дүн
+  status       CashCaseStatus      @default(OPEN)
+  resolution   CashCaseResolution?
+  recoveredMnt BigInt              @default(0) @map("recovered_mnt") // нөхөгдсөн (хэсэгчлэн байж болно)
+  note         String?
+
+  openJournalEntryId    String? @map("open_journal_entry_id") // үүсэх үеийн журнал
+  resolveJournalEntryId String? @map("resolve_journal_entry_id") // шийдвэрлэх үеийн журнал
+  payrollRunId          String? @map("payroll_run_id") // цалингаас суутгасан бол
+
+  decidedById String?   @map("decided_by_id")
+  decidedAt   DateTime? @map("decided_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  station  Station  @relation(fields: [stationId], references: [id])
+  shift    Shift    @relation(fields: [shiftId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([companyId, status])
+  @@index([employeeId, createdAt])
+  @@index([stationId, createdAt])
+  @@map("cash_variance_case")
 }
 
 /// Чөлөөний хүсэлт — хүсэлт→батлах/татгалзах урсгал (separation of duties), хоног + үлдэгдэл.

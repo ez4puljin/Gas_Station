@@ -20,6 +20,7 @@ import { FinanceModule } from './modules/finance/finance.module';
 import { HealthModule } from './modules/health/health.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
+import { CashAccountabilityModule } from './modules/cash-accountability/cash-accountability.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
 import { PosModule } from './modules/pos/pos.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
@@ -56,6 +57,7 @@ import { SyncModule } from './modules/sync/sync.module';
     CustomersModule,
     ProcurementModule,
     AccountingModule,
+    CashAccountabilityModule,
     PayrollModule,
     AdminModule,
   ],
