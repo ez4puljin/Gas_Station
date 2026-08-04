@@ -890,12 +890,14 @@ export class PosService {
     const [rows, total] = await Promise.all([
       this.prisma.sale.findMany({
         where,
-        // Жагсаалтад мөрийн өгөгдөл хэрэггүй — зөвхөн тоо. Бүх line-г ачаалахын оронд `_count`
-        // (том огнооны мужид мянга мянган мөр ачаалахаас сэргийлж хурд/payload-ыг сайжруулна).
+        // Жагсаалтад мөрийн ӨГӨГДӨЛ хэрэггүй — зөвхөн тоо.
+        // ГҮЙЦЭТГЭЛ: `_count: { lines: true }`-ийг ЭНД хэрэглэхгүй — Prisma үүнийг шүүлтэд
+        // тохирсон БҮХ борлуулалт дээр correlated subquery болгодог тул (энэ хуудсан дээрх
+        // мөрүүд биш) 90 хоногийн мужид ~83ms нэмдэг. Оронд нь доор зөвхөн ЭНЭ ХУУДСАНЫ
+        // id-гаар нэг groupBy хийнэ (~2ms).
         include: {
           payments: true,
           refunds: { select: { amountMnt: true } },
-          _count: { select: { lines: true } },
         },
         orderBy: { soldAt: 'desc' },
         skip: (q.page - 1) * q.pageSize,
@@ -904,7 +906,14 @@ export class PosService {
       this.prisma.sale.count({ where }),
     ]);
 
-    const names = await this.resolveNames(rows);
+    const pageIds = rows.map((s) => s.id);
+    const [names, lineCounts] = await Promise.all([
+      this.resolveNames(rows),
+      pageIds.length
+        ? this.prisma.saleLine.groupBy({ by: ['saleId'], where: { saleId: { in: pageIds } }, _count: { _all: true } })
+        : Promise.resolve([]),
+    ]);
+    const lineCountBySale = new Map(lineCounts.map((c) => [c.saleId, c._count._all]));
     const items = rows.map((s) => ({
       id: s.id,
       saleNumber: s.saleNumber,
@@ -921,7 +930,7 @@ export class PosService {
       totalMnt: s.totalMnt,
       refundedMnt: s.refunds.reduce((sum, r) => sum + r.amountMnt, 0n),
       methods: s.payments.map((p) => ({ method: p.method, amountMnt: p.amountMnt })),
-      lineCount: s._count.lines,
+      lineCount: lineCountBySale.get(s.id) ?? 0,
     }));
     return { items, page: q.page, pageSize: q.pageSize, total, totalPages: Math.ceil(total / q.pageSize) };
   }

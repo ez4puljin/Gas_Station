@@ -759,9 +759,24 @@ export class FinanceService {
 
     const CAP = 5000; // per-sale жагсаалтын дээд хязгаар (зөвхөн items-д); нийт/нэгтгэлийг DB aggregate-аар бүтнээр.
     const [rows, total, salesAgg, refundAgg, methodAgg, gradeAgg, productAgg, customerAgg] = await Promise.all([
+      // ГҮЙЦЭТГЭЛ: зөвхөн харагдацад хэрэгтэй баганыг сонгоно. Мөрийн (SaleLine) задаргааг
+      // ЭНД татахгүй — грейд/барааны задаргаа `byGrade`/`byProduct` нэгтгэлээр бүтнээр гардаг
+      // (5000 борлуулалтын ~10k мөрийг татаж хаях нь тайланг 6 дахин удаашруулдаг байсан).
       this.prisma.sale.findMany({
         where,
-        include: { lines: true, payments: true },
+        select: {
+          id: true,
+          saleNumber: true,
+          stationId: true,
+          soldAt: true,
+          status: true,
+          cashierId: true,
+          customerId: true,
+          subtotalMnt: true,
+          vatMnt: true,
+          totalMnt: true,
+          payments: { select: { method: true, amountMnt: true } },
+        },
         orderBy: { soldAt: 'asc' },
         take: CAP,
       }),
@@ -777,8 +792,8 @@ export class FinanceService {
 
     // Нэр шийдвэрлэх — items-ийн (rows) + нэгтгэлийн (aggregate) ID-уудыг хосолж багцалж.
     const cashierIds = [...new Set(rows.map((s) => s.cashierId))];
-    const gradeIds = [...new Set([...rows.flatMap((s) => s.lines.map((l) => l.fuelGradeId)), ...gradeAgg.map((g) => g.fuelGradeId)].filter((x): x is string => !!x))];
-    const productIds = [...new Set([...rows.flatMap((s) => s.lines.map((l) => l.productId)), ...productAgg.map((p) => p.productId)].filter((x): x is string => !!x))];
+    const gradeIds = [...new Set(gradeAgg.map((g) => g.fuelGradeId).filter((x): x is string => !!x))];
+    const productIds = [...new Set(productAgg.map((p) => p.productId).filter((x): x is string => !!x))];
     const customerIds = [...new Set([...rows.map((s) => s.customerId), ...customerAgg.map((c) => c.customerId)].filter((x): x is string => !!x))];
     const [emps, custs, stations, grades, products] = await Promise.all([
       cashierIds.length ? this.prisma.employee.findMany({ where: { id: { in: cashierIds } }, select: { id: true, firstName: true, lastName: true } }) : Promise.resolve([]),
@@ -812,14 +827,6 @@ export class FinanceService {
       vatMnt: s.vatMnt,
       totalMnt: s.totalMnt,
       methods: s.payments.map((p) => ({ method: p.method, amountMnt: p.amountMnt })),
-      lines: s.lines.map((l) => ({
-        type: l.type,
-        name: l.description,
-        grade: l.fuelGradeId ? (gradeName.get(l.fuelGradeId) ?? null) : null,
-        quantity: l.quantity.toString(),
-        unitPriceMnt: l.unitPriceMnt,
-        lineTotalMnt: l.lineTotalMnt,
-      })),
     }));
 
     return {

@@ -358,37 +358,70 @@ export class ShiftService {
     const end = new Date(`${ubDate}T00:00:00+08:00`);
     end.setUTCDate(end.getUTCDate() + 1);
 
-    const perStation = await Promise.all(
-      stations.map(async (s) => {
-        const shift = await this.prisma.shift.findFirst({
-          where: { stationId: s.id, status: { not: ShiftStatus.CLOSED } },
-          include: { cashiers: { include: { employee: { select: { firstName: true, lastName: true } } } } },
-          orderBy: { openedAt: 'desc' },
-        });
-        const saleWhere = { stationId: s.id, deletedAt: null, status: { not: SaleStatus.VOIDED }, soldAt: { gte: start, lt: end } };
-        const [agg, byMethodRows] = await Promise.all([
-          this.prisma.sale.aggregate({ where: saleWhere, _sum: { totalMnt: true }, _count: true }),
-          this.prisma.payment.groupBy({ by: ['method'], where: { sale: saleWhere }, _sum: { amountMnt: true } }),
-        ]);
-        const byMethod: Record<string, bigint> = {};
-        for (const r of byMethodRows) byMethod[r.method] = r._sum.amountMnt ?? 0n;
-        const cashier = shift?.cashiers[0]?.employee;
-        return {
-          station: { id: s.id, code: s.code, name: s.name },
-          shift: shift
-            ? {
-                id: shift.id,
-                status: shift.status,
-                openedAt: shift.openedAt,
-                cashierName: cashier ? `${cashier.firstName} ${cashier.lastName}`.trim() : null,
-              }
-            : null,
-          salesCount: agg._count,
-          todayGrossMnt: agg._sum.totalMnt ?? 0n,
-          byMethod,
-        };
+    // ГҮЙЦЭТГЭЛ: салбар бүрд тусад нь query явуулахын оронд (N салбар × 3 = N+1 асуудал)
+    // БҮХ салбарынхыг 3 query-гээр нэг дор татаж, санах ойд бүлэглэнэ.
+    const saleWhereAll = {
+      stationId: { in: ids },
+      deletedAt: null,
+      status: { not: SaleStatus.VOIDED },
+      soldAt: { gte: start, lt: end },
+    };
+    const [openShifts, salesByStation, tenderRows] = await Promise.all([
+      this.prisma.shift.findMany({
+        where: { stationId: { in: ids }, status: { not: ShiftStatus.CLOSED } },
+        include: { cashiers: { include: { employee: { select: { firstName: true, lastName: true } } } } },
+        orderBy: { openedAt: 'desc' },
       }),
-    );
+      this.prisma.sale.groupBy({
+        by: ['stationId'],
+        where: saleWhereAll,
+        _sum: { totalMnt: true },
+        _count: { _all: true },
+      }),
+      // Салбар × төлбөрийн хэлбэрээр — Prisma groupBy нь холбоосын багана дээр бүлэглэж
+      // чаддаггүй тул parameterized raw (§8: concat үгүй).
+      this.prisma.$queryRaw<{ station_id: string; method: string; sum: bigint | null }[]>`
+        SELECT s.station_id, p.method::text AS method, SUM(p.amount_mnt) AS sum
+        FROM payment p
+        JOIN sale s ON s.id = p.sale_id
+        WHERE s.station_id = ANY(${ids})
+          AND s.deleted_at IS NULL
+          AND s.status <> 'VOIDED'
+          AND s.sold_at >= ${start}
+          AND s.sold_at < ${end}
+        GROUP BY 1, 2`,
+    ]);
+
+    // Салбар бүрийн ХАМГИЙН СҮҮЛИЙН нээлттэй ээлж (orderBy desc тул эхнийх нь)
+    const shiftByStation = new Map<string, (typeof openShifts)[number]>();
+    for (const sh of openShifts) if (!shiftByStation.has(sh.stationId)) shiftByStation.set(sh.stationId, sh);
+    const aggByStation = new Map(salesByStation.map((a) => [a.stationId, a]));
+    const methodsByStation = new Map<string, Record<string, bigint>>();
+    for (const r of tenderRows) {
+      const m = methodsByStation.get(r.station_id) ?? {};
+      m[r.method] = BigInt(r.sum ?? 0);
+      methodsByStation.set(r.station_id, m);
+    }
+
+    const perStation = stations.map((s) => {
+      const shift = shiftByStation.get(s.id);
+      const agg = aggByStation.get(s.id);
+      const cashier = shift?.cashiers[0]?.employee;
+      return {
+        station: { id: s.id, code: s.code, name: s.name },
+        shift: shift
+          ? {
+              id: shift.id,
+              status: shift.status,
+              openedAt: shift.openedAt,
+              cashierName: cashier ? `${cashier.firstName} ${cashier.lastName}`.trim() : null,
+            }
+          : null,
+        salesCount: agg?._count._all ?? 0,
+        todayGrossMnt: agg?._sum.totalMnt ?? 0n,
+        byMethod: methodsByStation.get(s.id) ?? {},
+      };
+    });
 
     const pending = await this.prisma.shift.findMany({
       where: { stationId: { in: ids }, status: { in: [ShiftStatus.PENDING_OPEN, ShiftStatus.PENDING_CLOSE] } },

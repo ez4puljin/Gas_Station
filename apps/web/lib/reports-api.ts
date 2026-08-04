@@ -11,14 +11,8 @@ function qs(params: Record<string, string | number | undefined | null>): string 
 }
 
 // ── Борлуулалтын тайлан ──
-export interface SalesReportLine {
-  type: 'FUEL' | 'PRODUCT';
-  name: string;
-  grade: string | null;
-  quantity: string;
-  unitPriceMnt: string;
-  lineTotalMnt: string;
-}
+// Тайлангийн мөр бүрд БАРААНЫ ЗАДАРГАА ирэхгүй (гүйцэтгэл): грейд/барааны задаргааг
+// `byGrade`/`byProduct` нэгтгэлээс, нэг борлуулалтын дэлгэрэнгүйг `posApi.getSale(id)`-ээс ав.
 export interface SalesReportRow {
   id: string;
   saleNumber: string | null;
@@ -31,7 +25,6 @@ export interface SalesReportRow {
   vatMnt: string;
   totalMnt: string;
   methods: { method: string; amountMnt: string }[];
-  lines: SalesReportLine[];
 }
 export interface SalesReport {
   from: string;
