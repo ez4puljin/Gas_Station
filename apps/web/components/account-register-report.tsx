@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, ChevronDown, ChevronRight, Fuel, Package, Search } from 'lucide-react';
 import { formatMnt, ledgerBalanceColumns, ledgerGrossColumns, type LedgerNature } from '@fuel/schemas';
 import { PrintableReport } from '@/components/printable-report';
 import type { LedgerRow } from '@/components/account-ledger-report';
@@ -32,11 +32,13 @@ export interface AccountRegisterReportProps {
   partyKind: string; // "Харилцагч" | "Нийлүүлэгч"
   nature: LedgerNature; // 'debit' = авлага, 'credit' = өглөг
   data: AccountRegister;
+  /** Шүүлтээр сонгосон тал — зөвхөн түүнийг харуулж, автоматаар задална. */
+  partyId?: string;
   /** Мөр задлахад тухайн талын гүйлгээг татна. */
   loadRows: (partyId: string) => Promise<LedgerRow[]>;
 }
 
-export function AccountRegisterReport({ title, fileBase, accountLabel, partyKind, nature, data, loadRows }: AccountRegisterReportProps) {
+export function AccountRegisterReport({ title, fileBase, accountLabel, partyKind, nature, data, partyId, loadRows }: AccountRegisterReportProps) {
   const [q, setQ] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Record<string, LedgerRow[]>>({});
@@ -44,35 +46,61 @@ export function AccountRegisterReport({ title, fileBase, accountLabel, partyKind
   const [exporting, setExporting] = useState(false);
 
   const rows = useMemo(() => {
+    let out = data.rows;
+    if (partyId) out = out.filter((r) => r.partyId === partyId);
     const needle = q.trim().toLowerCase();
-    if (!needle) return data.rows;
-    return data.rows.filter(
-      (r) =>
-        r.name.toLowerCase().includes(needle) ||
-        (r.code ?? '').toLowerCase().includes(needle) ||
-        (r.regNo ?? '').toLowerCase().includes(needle),
-    );
-  }, [data.rows, q]);
+    if (needle) {
+      out = out.filter(
+        (r) =>
+          r.name.toLowerCase().includes(needle) ||
+          (r.code ?? '').toLowerCase().includes(needle) ||
+          (r.regNo ?? '').toLowerCase().includes(needle),
+      );
+    }
+    return out;
+  }, [data.rows, q, partyId]);
 
-  async function toggle(r: AccountRegisterRow) {
-    if (openId === r.partyId) { setOpenId(null); return; }
-    setOpenId(r.partyId);
-    if (!detail[r.partyId] && r.txnCount > 0) {
-      setLoadingId(r.partyId);
+  async function toggleOpen(id: string, force = false) {
+    if (!force && openId === id) { setOpenId(null); return; }
+    setOpenId(id);
+    if (!detail[id]) {
+      setLoadingId(id);
       try {
-        const rows = await loadRows(r.partyId);
-        setDetail((d) => ({ ...d, [r.partyId]: rows }));
+        const loaded = await loadRows(id);
+        setDetail((d) => ({ ...d, [id]: loaded }));
       } catch {
-        setDetail((d) => ({ ...d, [r.partyId]: [] }));
+        setDetail((d) => ({ ...d, [id]: [] }));
       } finally {
         setLoadingId(null);
       }
     }
   }
 
+  // Шүүлт хийсэн тохиолдолд ХАРАГДАЖ буй мөрүүдээс нийт дүнг бодно — хэвлэсэн
+  // хүснэгтийн мөрүүд ба нийт дүн үргэлж тохирно.
+  const t = useMemo(() => {
+    if (!partyId && !q.trim()) return data.totals;
+    const s = rows.reduce(
+      (a, r) => ({
+        openingMnt: a.openingMnt + toB(r.openingMnt),
+        debitMnt: a.debitMnt + toB(r.debitMnt),
+        creditMnt: a.creditMnt + toB(r.creditMnt),
+        closingMnt: a.closingMnt + toB(r.closingMnt),
+      }),
+      { openingMnt: 0n, debitMnt: 0n, creditMnt: 0n, closingMnt: 0n },
+    );
+    return { openingMnt: s.openingMnt.toString(), debitMnt: s.debitMnt.toString(), creditMnt: s.creditMnt.toString(), closingMnt: s.closingMnt.toString() };
+  }, [data.totals, rows, partyId, q]);
+
   // Балансын шалгалт: Эхний + Дебет − Кредит = Эцсийн (§12 инвариант)
-  const t = data.totals;
   const checkOk = toB(t.openingMnt) + toB(t.debitMnt) - toB(t.creditMnt) === toB(t.closingMnt);
+
+  // Шүүлтээр нэг тал сонгосон бол шууд задалж харуулна (нэг талын тооцооны акт).
+  useEffect(() => {
+    if (partyId) void toggleOpen(partyId, true);
+    else setOpenId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partyId, data.from, data.to]);
 
   const bal = (v: string | bigint) => ledgerBalanceColumns(nature, toB(v));
   const gross = (d: string | bigint, c: string | bigint) => ledgerGrossColumns(nature, toB(d), toB(c));
@@ -177,7 +205,7 @@ export function AccountRegisterReport({ title, fileBase, accountLabel, partyKind
                 <RegisterRow
                   key={r.partyId}
                   r={r} o={o} g={g} c={c} zebra={i % 2 === 1} isOpen={isOpen}
-                  onToggle={() => void toggle(r)}
+                  onToggle={() => void toggleOpen(r.partyId)}
                   loading={loadingId === r.partyId}
                   drill={drill}
                   nature={nature}
@@ -280,31 +308,95 @@ function RegisterRow({
                     </tr>
                   </thead>
                   <tbody>
-                    {drill.map((x) => {
-                      const xg = ledgerGrossColumns(nature, toB(x.debitMnt), toB(x.creditMnt));
-                      const xb = ledgerBalanceColumns(nature, toB(x.balanceAfterMnt));
-                      const sub = [x.methodLabel, x.reason].filter(Boolean).join(' · ');
-                      return (
-                        <tr key={x.id} className="border-t">
-                          <td className="whitespace-nowrap px-1 py-1 text-muted-foreground">
-                            {new Date(x.createdAt).toLocaleDateString('mn-MN', { timeZone: 'Asia/Ulaanbaatar' })}
-                          </td>
-                          <td className="px-1 py-1 text-muted-foreground">{x.ref ?? '—'}</td>
-                          <td className="px-1 py-1">
-                            {x.typeLabel}
-                            {sub && <span className="text-muted-foreground"> · {sub}</span>}
-                          </td>
-                          <td className="px-1 py-1 text-right tabular-nums">{cell(xg.debit)}</td>
-                          <td className="px-1 py-1 text-right tabular-nums">{cell(xg.credit)}</td>
-                          <td className="px-1 py-1 text-right font-medium tabular-nums">
-                            {cell(xb.debit) || cell(xb.credit)}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {drill.map((x) => (
+                      <TxnRow key={x.id} x={x} nature={nature} />
+                    ))}
                   </tbody>
                 </table>
               )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/**
+ * Гүйлгээний мөр — 2 дахь шатны задаргаа: дээр нь 2 удаа дарж доторх бараа/түлшийг харна.
+ * (Өмнө нь энэ нь тусдаа "нэг талын тооцооны дэвтэр" тайлан байсныг энд нэгтгэв.)
+ */
+function TxnRow({ x, nature }: { x: LedgerRow; nature: LedgerNature }) {
+  const [open, setOpen] = useState(false);
+  const g = ledgerGrossColumns(nature, toB(x.debitMnt), toB(x.creditMnt));
+  const b = ledgerBalanceColumns(nature, toB(x.balanceAfterMnt));
+  const sub = [x.methodLabel, x.reason].filter(Boolean).join(' · ');
+  const hasItems = x.items.length > 0;
+  return (
+    <>
+      <tr
+        className={`border-t ${hasItems ? 'cursor-pointer hover:bg-accent/40' : ''}`}
+        onDoubleClick={() => hasItems && setOpen((v) => !v)}
+        title={hasItems ? 'Доторх бараа/түлш (2 удаа дарна)' : undefined}
+      >
+        <td className="whitespace-nowrap px-1 py-1 text-muted-foreground">
+          {new Date(x.createdAt).toLocaleDateString('mn-MN', { timeZone: 'Asia/Ulaanbaatar' })}
+        </td>
+        <td className="px-1 py-1 text-muted-foreground">{x.ref ?? '—'}</td>
+        <td className="px-1 py-1">
+          <span className="inline-flex items-center gap-1">
+            {hasItems &&
+              (open ? (
+                <ChevronDown size={11} className="no-print shrink-0 text-primary" />
+              ) : (
+                <ChevronRight size={11} className="no-print shrink-0 text-muted-foreground" />
+              ))}
+            {x.typeLabel}
+            {sub && <span className="text-muted-foreground"> · {sub}</span>}
+          </span>
+        </td>
+        <td className="px-1 py-1 text-right tabular-nums">{cell(g.debit)}</td>
+        <td className="px-1 py-1 text-right tabular-nums">{cell(g.credit)}</td>
+        <td className="px-1 py-1 text-right font-medium tabular-nums">{cell(b.debit) || cell(b.credit)}</td>
+      </tr>
+      {open && hasItems && (
+        <tr className="border-t bg-background">
+          <td />
+          <td colSpan={5} className="px-1 py-1.5">
+            <div className="rounded-md border bg-card p-1.5">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Орсон бараа / түлш
+              </div>
+              <table className="w-full text-[11px]">
+                <thead className="text-left text-muted-foreground">
+                  <tr>
+                    <th className="px-1 py-0.5 font-medium">Нэр</th>
+                    <th className="px-1 py-0.5 text-right font-medium">Тоо хэмжээ</th>
+                    <th className="px-1 py-0.5 text-right font-medium">Нэгж үнэ</th>
+                    <th className="px-1 py-0.5 text-right font-medium">Дүн</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {x.items.map((it, i) => (
+                    <tr key={i} className="border-t">
+                      <td className="px-1 py-0.5">
+                        <span className="inline-flex items-center gap-1">
+                          {it.itemType === 'FUEL' ? (
+                            <Fuel size={10} className="text-blue-500" />
+                          ) : (
+                            <Package size={10} className="text-amber-600" />
+                          )}
+                          {it.name}
+                          {it.sku && <span className="text-muted-foreground">({it.sku})</span>}
+                        </span>
+                      </td>
+                      <td className="px-1 py-0.5 text-right tabular-nums">{it.quantity} {it.unit}</td>
+                      <td className="px-1 py-0.5 text-right tabular-nums">{formatMnt(it.unitCostMnt, { symbol: false })}</td>
+                      <td className="px-1 py-0.5 text-right font-medium tabular-nums">{formatMnt(it.totalCostMnt, { symbol: false })}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </td>
         </tr>

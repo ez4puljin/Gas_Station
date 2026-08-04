@@ -28,10 +28,8 @@ const GROUPS = [
     title: 'Тооцоо нийлэх (авлага / өглөг)',
     hint: 'Эхний үлдэгдэл · Дебет · Кредит · Эцсийн үлдэгдэл',
     items: [
-      { href: '/reports/receivables', title: 'Авлагын тооцооны бүртгэл', desc: 'БҮХ харилцагч нэг хүснэгтэд. Мөр дээр 2 дарж гүйлгээг задална.', icon: HandCoins, primary: true },
-      { href: '/reports/payables', title: 'Өглөгийн тооцооны бүртгэл', desc: 'БҮХ нийлүүлэгч нэг хүснэгтэд. Мөр дээр 2 дарж гүйлгээг задална.', icon: Building2, primary: true },
-      { href: '/reports/ledger', title: 'Харилцагчийн дэлгэрэнгүй', desc: 'Нэг харилцагчийн гүйлгээ бүрээр, доторх бараа/түлштэй.', icon: ReceiptText },
-      { href: '/reports/supplier-ledger', title: 'Нийлүүлэгчийн дэлгэрэнгүй', desc: 'Нэг нийлүүлэгчийн гүйлгээ бүрээр, доторх бараа/түлштэй.', icon: Truck },
+      { href: '/reports/receivables', title: 'Авлагын тооцооны бүртгэл', desc: 'Харилцагч сонгож эсвэл бүгдээр. Мөр → гүйлгээ → доторх бараа (2 дарна).', icon: HandCoins, primary: true },
+      { href: '/reports/payables', title: 'Өглөгийн тооцооны бүртгэл', desc: 'Нийлүүлэгч сонгож эсвэл бүгдээр. Мөр → гүйлгээ → доторх бараа (2 дарна).', icon: Building2, primary: true },
       { href: '/reports/aging', title: 'Насжилтын шинжилгээ', desc: '0–30 / 31–60 / 61–90 / 90+ хоногоор (FIFO).', icon: Clock },
     ],
   },
@@ -47,8 +45,8 @@ const GROUPS = [
   {
     title: 'Борлуулалт / ээлж',
     items: [
-      { href: '/reports/sales', title: 'Борлуулалтын тайлан', desc: 'Огнооны муж, харилцагч/түлш/бараагаар.', icon: ReceiptText },
-      { href: '/reports/history', title: 'Борлуулалтын түүх', desc: 'Гүйлгээ бүрийн дэлгэрэнгүй, буцаалт / цуцлалт.', icon: ClipboardList },
+      { href: '/reports/sales', title: 'Борлуулалтын тайлан', desc: 'Огнооны муж, салбар, харилцагч, түлш/бараагаар нэгтгэл.', icon: ReceiptText },
+      { href: '/sales-history', title: 'Борлуулалтын түүх', desc: 'Гүйлгээ бүрийн дэлгэрэнгүй, буцаалт / цуцлалт хийх.', icon: ClipboardList },
       { href: '/reports/shifts', title: 'Ээлжийн тайлан (Z)', desc: 'Ээлжийн түүх, хаалтын Z-тайлан, тооцоо нийлэлт.', icon: FileText },
     ],
   },

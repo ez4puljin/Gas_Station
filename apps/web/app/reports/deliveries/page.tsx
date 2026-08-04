@@ -7,6 +7,7 @@ import { BackLink } from '@/components/back-link';
 import { PrintableReport } from '@/components/printable-report';
 import { formatMnt } from '@fuel/schemas';
 import { ApiException, tokenStore } from '@/lib/api';
+import { procurementApi } from '@/lib/procurement-api';
 import { posApi, type StationDto } from '@/lib/pos-api';
 import { reportsApi, type DeliveriesReport } from '@/lib/reports-api';
 import { exportXlsx } from '@/lib/export-xlsx';
@@ -23,7 +24,8 @@ export default function DeliveriesReportPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [stations, setStations] = useState<StationDto[]>([]);
-  const [f, setF] = useState({ stationId: '', from: monthRange().from, to: monthRange().to });
+  const [f, setF] = useState({ stationId: '', supplierId: '', from: monthRange().from, to: monthRange().to });
+  const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
   const [report, setReport] = useState<DeliveriesReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,6 +36,7 @@ export default function DeliveriesReportPage() {
       router.replace('/login');
       return;
     }
+    void procurementApi.suppliers().then(setSuppliers).catch(() => undefined);
     posApi
       .stations()
       .then((s) => setStations(s))
@@ -49,6 +52,7 @@ export default function DeliveriesReportPage() {
         from: f.from,
         to: f.to,
         stationId: f.stationId || undefined,
+        supplierId: f.supplierId || undefined,
       });
       setReport(r);
     } catch (e) {
@@ -138,11 +142,17 @@ export default function DeliveriesReportPage() {
 
         {error && <p className="mb-4 rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
-        <div className="mb-5 grid grid-cols-2 gap-2 rounded-2xl border bg-card p-3 shadow-sm sm:grid-cols-4">
+        <div className="mb-5 grid grid-cols-2 gap-2 rounded-2xl border bg-card p-3 shadow-sm sm:grid-cols-5">
           <Field label="Салбар">
             <select value={f.stationId} onChange={(e) => setF((s) => ({ ...s, stationId: e.target.value }))} className="w-full rounded-lg border bg-background px-2 py-1.5 text-sm">
               <option value="">Бүх салбар</option>
               {stations.map((s) => <option key={s.id} value={s.id}>{s.code}</option>)}
+            </select>
+          </Field>
+          <Field label="Нийлүүлэгч">
+            <select value={f.supplierId} onChange={(e) => setF((s) => ({ ...s, supplierId: e.target.value }))} className="w-full rounded-lg border bg-background px-2 py-1.5 text-sm">
+              <option value="">Бүх нийлүүлэгч</option>
+              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </Field>
           <Field label="Эхлэх"><input type="date" value={f.from} onChange={(e) => setF((s) => ({ ...s, from: e.target.value }))} className="w-full rounded-lg border bg-background px-2 py-1.5 text-sm" /></Field>

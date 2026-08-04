@@ -6,21 +6,16 @@ import { CUSTOMER_TXN_LABEL, type CustomerTxnType, PAYMENT_METHOD_LABEL, type Pa
 import { AccountRegisterReport } from '@/components/account-register-report';
 import type { LedgerRow } from '@/components/account-ledger-report';
 import { BackLink } from '@/components/back-link';
+import { defaultRange, ReportFilters } from '@/components/report-filters';
 import { ApiException, tokenStore } from '@/lib/api';
 import { type AccountRegister, customersApi } from '@/lib/customers-api';
-
-function monthRange() {
-  const ub = new Date(Date.now() + 8 * 3600 * 1000);
-  const y = ub.getUTCFullYear();
-  const m = String(ub.getUTCMonth() + 1).padStart(2, '0');
-  return { from: `${y}-${m}-01`, to: ub.toISOString().slice(0, 10) };
-}
 
 /** Харилцагчийн авлагын НЭГДСЭН тооцооны бүртгэл — бүх харилцагч нэг хүснэгтэд. */
 export default function ReceivablesRegisterPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const [range, setRange] = useState(monthRange);
+  const [range, setRange] = useState(defaultRange);
+  const [customerId, setCustomerId] = useState('');
   const [data, setData] = useState<AccountRegister | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -69,16 +64,7 @@ export default function ReceivablesRegisterPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Авлагын тооцооны бүртгэл</h1>
           <p className="text-sm text-muted-foreground">Бүх харилцагчийн эхний үлдэгдэл, гүйлгээ, эцсийн үлдэгдэл</p>
         </header>
-        <div className="mb-5 flex flex-wrap items-end gap-3">
-          <label className="text-sm">
-            <span className="mb-1 block text-xs font-medium text-muted-foreground">Эхлэх</span>
-            <input type="date" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} className="min-h-touch rounded-xl border bg-background px-3 text-sm" />
-          </label>
-          <label className="text-sm">
-            <span className="mb-1 block text-xs font-medium text-muted-foreground">Дуусах</span>
-            <input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} className="min-h-touch rounded-xl border bg-background px-3 text-sm" />
-          </label>
-        </div>
+        <ReportFilters range={range} onRange={setRange} customerId={customerId} onCustomer={setCustomerId} />
         {error && <p className="mb-4 rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       </div>
 
@@ -91,6 +77,7 @@ export default function ReceivablesRegisterPage() {
           partyKind="Харилцагч"
           nature="debit"
           data={data}
+          partyId={customerId || undefined}
           loadRows={loadRows}
         />
       )}
