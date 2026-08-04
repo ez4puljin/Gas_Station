@@ -162,17 +162,27 @@ export class PosService {
         const mm = String(ub.getUTCMonth() + 1).padStart(2, '0');
         const dd = String(ub.getUTCDate()).padStart(2, '0');
         const dateLabel = `${yyyy}/${mm}/${dd}`;
-        const dayStartUtc = new Date(Date.UTC(yyyy, ub.getUTCMonth(), ub.getUTCDate()) - 8 * 3600 * 1000);
-        const dayEndUtc = new Date(dayStartUtc.getTime() + 24 * 3600 * 1000);
         const stationRow = await tx.station.findUnique({
           where: { id: input.stationId },
           select: { code: true },
         });
-        const todayCount = await tx.sale.count({
-          where: { stationId: input.stationId, soldAt: { gte: dayStartUtc, lt: dayEndUtc } },
+        // Дугаарлалтыг САЛБАР×ӨДРӨӨР цуваарлана. Үүнгүйгээр зэрэгцээ борлуулалтууд ижил
+        // дугаар авдаг байсан (тус бүр нь ижил "хамгийн их"-ийг уншина). Түгжээ нь transaction
+        // дуустал баригдана; өөр салбар/өдрийнхөнд нөлөөлөхгүй.
+        // ($executeRaw — pg_advisory_xact_lock нь `void` буцаадаг тул $queryRaw задлаж чаддаггүй)
+        const lockKey = `sale-no:${input.stationId}:${dateLabel}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey})::bigint)`;
+        // ТООЛОХ биш, хамгийн их дугаараас нэмнэ: устгал/цоорхойд ч давхцахгүй, O(1) индекс хайлт
+        // (өмнө нь тухайн өдрийн БҮХ борлуулалтыг тоолдог байсан). Дараалал 4 оронтой тул
+        // текст эрэмбэ = тоон эрэмбэ (өдөрт 9999 хүртэл; түүнээс хэтэрвэл unique index барина).
+        const prefix = `${stationRow?.code ?? 'X'}-${dateLabel}-`;
+        const last = await tx.sale.findFirst({
+          where: { stationId: input.stationId, saleNumber: { startsWith: prefix } },
+          orderBy: { saleNumber: 'desc' },
+          select: { saleNumber: true },
         });
-        const seq = String(todayCount + 1).padStart(4, '0');
-        const saleNumber = `${stationRow?.code ?? 'X'}-${dateLabel}-${seq}`;
+        const lastSeq = last?.saleNumber ? (Number.parseInt(last.saleNumber.slice(prefix.length), 10) || 0) : 0;
+        const saleNumber = `${prefix}${String(lastSeq + 1).padStart(4, '0')}`;
 
         const sale = await tx.sale.create({
           data: {
@@ -260,6 +270,17 @@ export class PosService {
     } catch (err) {
       // Зэрэгцээ давхар sync (race) — unique зөрчил гарвал хуучныг буцаана
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // АЛЬ unique зөрчигдснийг ялгана. `sale_number` бол давхар илгээлт БИШ — түүнийг
+        // хуучин борлуулалт болгон буцаах нь ӨӨР гүйлгээг эргүүлж өгөх эрсдэлтэй.
+        const target = Array.isArray(err.meta?.target)
+          ? (err.meta.target as string[]).join(',')
+          : String(err.meta?.target ?? '');
+        if (target.includes('sale_number')) {
+          throw new ConflictException({
+            code: 'SALE_NUMBER_CONFLICT',
+            message: 'Борлуулалтын дугаар давхцлаа. Дахин оролдоно уу',
+          });
+        }
         const dup = await this.prisma.sale.findUnique({
           where: { clientGeneratedId: input.clientGeneratedId },
           include: saleInclude,

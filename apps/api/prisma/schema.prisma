@@ -581,6 +581,9 @@ model Sale {
   payments Payment[]
   refunds  Refund[]
 
+  // Баримтын дугаар салбар дотроо ДАВХЦАХГҮЙ (хууль зүйн шаардлага). Дугаарлалтыг
+  // advisory lock-оор цуваарлана; энэ нь эцсийн хамгаалалт (NULL олон байж болно).
+  @@unique([stationId, saleNumber])
   @@index([stationId, soldAt])
   @@index([shiftId])
   @@index([cashierId])

@@ -32,6 +32,10 @@ export default function SalesReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Гүйлгээний хүснэгтийн хуудаслалт — 5000 мөрийг DOM-д зурвал browser гацдаг.
+  // Excel экспорт нь ХАМААРАЛГҮЙ: тэр үргэлж бүх мөрөөр (report.items) гарна.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100); // 0 = бүгд
 
   useEffect(() => {
     if (!tokenStore.access) {
@@ -69,6 +73,7 @@ export default function SalesReportPage() {
         search: f.search || undefined,
       });
       setReport(r);
+      setPage(1);
     } catch (e) {
       if (e instanceof ApiException && e.error.statusCode === 401) router.replace('/login');
       else setError(e instanceof ApiException ? e.error.message : 'Тайлан ачаалахад алдаа гарлаа');
@@ -78,6 +83,14 @@ export default function SalesReportPage() {
   }, [f, router]);
 
   const rangeLabel = useMemo(() => (report ? `${report.from} — ${report.to}` : ''), [report]);
+
+  // Зөвхөн ХАРАГДАЖ БУЙ хуудсыг DOM-д зурна (5000 мөр зурвал үндсэн урсгал гацна).
+  const pageCount = report && pageSize > 0 ? Math.max(1, Math.ceil(report.items.length / pageSize)) : 1;
+  const pagedItems = useMemo(() => {
+    if (!report) return [];
+    if (pageSize === 0) return report.items;
+    return report.items.slice((page - 1) * pageSize, page * pageSize);
+  }, [report, page, pageSize]);
 
   async function doExport() {
     if (!report) return;
@@ -205,7 +218,30 @@ export default function SalesReportPage() {
             )}
           </div>
 
-          <h3 className="mb-2 text-sm font-semibold">Гүйлгээнүүд</h3>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">
+              Гүйлгээнүүд
+              <span className="ml-2 font-normal text-muted-foreground">
+                {report.items.length === 0
+                  ? '—'
+                  : pageSize === 0
+                    ? `1–${report.items.length} / ${report.items.length}`
+                    : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, report.items.length)} / ${report.items.length}`}
+                {report.truncated && ` (эхний ${report.items.length}; нийт ${report.totals.count})`}
+              </span>
+            </h3>
+            <label className="no-print text-xs text-muted-foreground">
+              Мөр:{' '}
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                className="rounded-lg border bg-background px-2 py-1 text-xs text-foreground"
+              >
+                {[50, 100, 250, 500].map((n) => <option key={n} value={n}>{n}</option>)}
+                <option value={0}>Бүгд (хэвлэхэд)</option>
+              </select>
+            </label>
+          </div>
           <table className="w-full text-sm">
             <thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
@@ -217,7 +253,7 @@ export default function SalesReportPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {report.items.map((s) => (
+              {pagedItems.map((s) => (
                 <tr key={s.id}>
                   <td className="py-1.5 pr-2 whitespace-nowrap text-muted-foreground">{new Date(s.soldAt).toLocaleString('mn-MN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
                   <td className="py-1.5 pr-2">{s.cashierName ?? '—'}</td>
@@ -229,9 +265,19 @@ export default function SalesReportPage() {
               {report.items.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">Борлуулалт олдсонгүй</td></tr>}
             </tbody>
             <tfoot>
-              <tr className="border-t-2 font-semibold"><td className="py-2 pr-2" colSpan={4}>НИЙТ</td><td className="py-2 text-right tabular-nums">{formatMnt(report.totals.grossMnt, { symbol: false })}</td></tr>
+              <tr className="border-t-2 font-semibold"><td className="py-2 pr-2" colSpan={4}>НИЙТ (бүх мөрөөр)</td><td className="py-2 text-right tabular-nums">{formatMnt(report.totals.grossMnt, { symbol: false })}</td></tr>
             </tfoot>
           </table>
+
+          {pageSize > 0 && pageCount > 1 && (
+            <div className="no-print mt-3 flex items-center justify-center gap-2 text-sm">
+              <button onClick={() => setPage(1)} disabled={page === 1} className="rounded-lg border px-2 py-1 text-xs disabled:opacity-40">« Эхэнд</button>
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border px-3 py-1 disabled:opacity-40">Өмнөх</button>
+              <span className="tabular-nums text-muted-foreground">{page} / {pageCount}</span>
+              <button onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={page >= pageCount} className="rounded-lg border px-3 py-1 disabled:opacity-40">Дараах</button>
+              <button onClick={() => setPage(pageCount)} disabled={page >= pageCount} className="rounded-lg border px-2 py-1 text-xs disabled:opacity-40">Сүүлд »</button>
+            </div>
+          )}
         </PrintableReport>
       )}
     </main>
