@@ -42,8 +42,12 @@ pnpm --filter @fuel/api exec prisma migrate deploy
 pnpm --filter @fuel/schemas exec vitest run src/money.test.ts   # ганц тест
 ```
 Локал: **`install.bat`** (бүрэн автомат нэг удаагийн setup: Node/pnpm шалгаж суулгах · env · install/build ·
-Postgres role/db · **Redis суулгаж асаах** · `migrate deploy` · `db:seed`) → **`start.bat`** (Postgres+Redis шалгаад dev).
-Хоёулаа `%~dp0`-оос ажиллана (өөр PC-д зам ялгаатай тул hardcode үгүй).
+Postgres role/db · **Redis суулгаж асаах** · `migrate deploy` · `db:seed`) → **`startup.bat`** (өдөр тутмын
+асаалт: порт цэвэрлэх · Postgres/Redis · deps · **багц build**+prisma+migration · эвдэрсэн `.next` цэвэрлэх ·
+хэрэглэгчгүй бол seed · dev + хөтөч автоматаар). `start.bat` нь түүний хялбар хувилбар.
+Бүгд `%~dp0`-оос ажиллана (өөр PC-д зам ялгаатай тул hardcode үгүй).
+> **.bat файлыг зөвхөн ASCII-гаар бич** — cmd.exe нь batch-ийг OEM code page-ээр задалдаг тул
+> кирилл үсэг командын задлан шинжлэлийг эвддэг (`chcp 65001` ч аврахгүй).
 
 ## 6. Конвенц
 - TS strict, `any` үгүй. Нэршил: type `PascalCase`, func `camelCase`, файл `kebab-case`, DB `snake_case` (`@map`).
