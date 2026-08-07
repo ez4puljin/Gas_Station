@@ -129,9 +129,11 @@ if exist "apps\web\.next\BUILD_ID" (
 )
 
 REM  Seed only when there is no user yet (seed itself is idempotent).
+REM  NOTE: no arrow functions here - cmd treats the ">" in "=>" as a redirect
+REM  and would create a junk file. Plain function() keeps the command safe.
 set "USERS="
 pushd apps\api
-for /f "delims=" %%N in ('node -e "const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.user.count().then(n=>{console.log(n);return p.$disconnect()}).catch(()=>{console.log('ERR')})" 2^>nul') do set "USERS=%%N"
+for /f "delims=" %%N in ('node -e "const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.user.count().then(function(n){console.log(n);return p.$disconnect()}).catch(function(){console.log('ERR')})" 2^>nul') do set "USERS=%%N"
 popd
 if "!USERS!"=="0" goto :do_seed
 if "!USERS!"=="" goto :do_seed
