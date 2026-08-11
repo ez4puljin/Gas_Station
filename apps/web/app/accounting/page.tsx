@@ -22,7 +22,7 @@ import { defaultRange, ReportFilters } from '@/components/report-filters';
 import { formatMnt } from '@fuel/schemas';
 import { ACCOUNT_TYPE_LABEL, type AccountType, JOURNAL_SOURCE_LABEL } from '@fuel/types';
 import { ApiException, tokenStore } from '@/lib/api';
-import { type Account, accountingApi, type JournalEntry, type TrialBalance } from '@/lib/accounting-api';
+import { type Account, accountingApi, type JournalEntry, type JournalLine, type TrialBalance } from '@/lib/accounting-api';
 
 const toB = (s: string | bigint) => {
   try { return typeof s === 'bigint' ? s : BigInt(s || '0'); } catch { return 0n; }
@@ -52,6 +52,19 @@ export default function AccountingPage() {
   const [onlyMoved, setOnlyMoved] = useState(true);
   const [jq, setJq] = useState('');
   const [openEntry, setOpenEntry] = useState<string | null>(null);
+  // Журналын мөрүүд жагсаалтад ирэхгүй (payload) — задлахад л татаж кэшилнэ.
+  const [entryLines, setEntryLines] = useState<Record<string, JournalLine[]>>({});
+
+  const toggleEntry = useCallback(async (id: string) => {
+    if (openEntry === id) { setOpenEntry(null); return; }
+    setOpenEntry(id);
+    if (!entryLines[id]) {
+      try {
+        const full = await accountingApi.getEntry(id);
+        setEntryLines((m) => ({ ...m, [id]: full.lines ?? [] }));
+      } catch { setEntryLines((m) => ({ ...m, [id]: [] })); }
+    }
+  }, [openEntry, entryLines]);
 
   // журналын маягт
   const [jDate, setJDate] = useState(() => defaultRange().to);
@@ -108,16 +121,14 @@ export default function AccountingPage() {
   const filteredEntries = useMemo(() => {
     const n = jq.trim().toLowerCase();
     if (!n) return entries;
+    // Мөрүүд жагсаалтад ирэхгүй тул дугаар/тайлбараар хайна (данс хайхад дэлгэрэнгүйд).
     return entries.filter(
-      (e) =>
-        e.entryNo.toLowerCase().includes(n) ||
-        (e.memo ?? '').toLowerCase().includes(n) ||
-        e.lines.some((l) => `${l.account?.code} ${l.account?.name}`.toLowerCase().includes(n)),
+      (e) => e.entryNo.toLowerCase().includes(n) || (e.memo ?? '').toLowerCase().includes(n),
     );
   }, [entries, jq]);
 
   const journalTotal = useMemo(
-    () => filteredEntries.reduce((s, e) => s + e.lines.reduce((x, l) => x + toB(l.debitMnt), 0n), 0n),
+    () => filteredEntries.reduce((s, e) => s + toB(e.amountMnt ?? '0'), 0n),
     [filteredEntries],
   );
 
@@ -285,7 +296,7 @@ export default function AccountingPage() {
                 </thead>
                 <tbody>
                   {filteredEntries.map((e, i) => {
-                    const amt = e.lines.reduce((s, l) => s + toB(l.debitMnt), 0n);
+                    const amt = toB(e.amountMnt ?? '0');
                     const open = openEntry === e.id;
                     return (
                       <EntryRow
@@ -294,7 +305,8 @@ export default function AccountingPage() {
                         amt={amt}
                         zebra={i % 2 === 1}
                         open={open}
-                        onToggle={() => setOpenEntry(open ? null : e.id)}
+                        onToggle={() => void toggleEntry(e.id)}
+                        lines={entryLines[e.id]}
                         onReverse={() => reverse(e.id)}
                         busy={busy}
                       />
@@ -376,7 +388,7 @@ export default function AccountingPage() {
 
 /** Журналын нэг бичилт — 2 дарахад мөрүүд задарна. */
 function EntryRow({
-  e, amt, zebra, open, onToggle, onReverse, busy,
+  e, amt, zebra, open, onToggle, onReverse, busy, lines,
 }: {
   e: JournalEntry;
   amt: bigint;
@@ -385,6 +397,7 @@ function EntryRow({
   onToggle: () => void;
   onReverse: () => void;
   busy: boolean;
+  lines: JournalLine[] | undefined;
 }) {
   return (
     <>
@@ -433,7 +446,10 @@ function EntryRow({
                   </tr>
                 </thead>
                 <tbody>
-                  {e.lines.map((l) => (
+                  {!lines && (
+                    <tr><td colSpan={4} className="px-1 py-2 text-center text-muted-foreground">Ачаалж байна…</td></tr>
+                  )}
+                  {(lines ?? []).map((l) => (
                     <tr key={l.id} className="border-t">
                       <td className="px-1 py-0.5">
                         <span className="font-mono text-muted-foreground">{l.account?.code}</span> {l.account?.name}

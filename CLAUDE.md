@@ -106,6 +106,14 @@ Web: бүх хуудас `'use client'`; бүрхүүл `components/app-shell.ts
   (`clientGeneratedId`); terminal алдаа → dead queue.
 - **Зураг = data URL** (canvas ~600px JPEG, DB-д inline); камер/scan-д HTTPS (localhost OK).
 - **PostgreSQL enum:** `ADD VALUE` ба ашиглалтыг **ТУСДАА migration-д** (нэг transaction дотор болохгүй).
+- **`plan_cache_mode=force_custom_plan`** (`prisma.service.ts` нь DATABASE_URL-д автоматаар нэмнэ; URL-д
+  `options=` байвал хүндэтгэнэ). Шалтгаан: PG нь prepared statement-ийг 5 гүйцэтгэлийн дараа generic plan
+  руу шилжүүлдэг ба Prisma бүгдийг prepared болгодог тул нэг statement 7 хоног/90 хоногийн мужид хуваалцахад
+  аль алинд нь тохирохгүй төлөвлөгөө **түгжигддэг**: sales-report 158ms → **935ms**, зөвхөн API restart-аар
+  сэргэдэг. Симптом = "сервер удаан ажиллах тусам тайлан удаашрах". **Хэмжихдээ API-г шинээр асаа**
+  (халаагүй процесс дээрх тоо худал сайн гарна).
+- **Огнооны мужийн индекс:** `sale` дээр `@@index([soldAt])` — олон салбарын тайлан `stationId IN (...)`
+  хэлбэртэй тул композит `(stationId, soldAt)` сонгогддоггүй (planner seq scan руу унана). 7 хоног 56→8ms.
 - **Partial unique** (schema-д `@@index`, raw SQL migration-д unique): нэг салбарт нэг идэвхтэй ээлж
   (`shift WHERE status<>CLOSED`), идэвхтэй савны код (`fuel_tank WHERE deleted_at IS NULL`) →
   **seed-д upsert биш `findFirst`+`create`.**
@@ -129,6 +137,14 @@ Web: бүх хуудас `'use client'`; бүрхүүл `components/app-shell.ts
 - **Гүйцэтгэл:** `lib/request-cache.ts` (`cachedFetch`/`invalidateCache`, TTL 60с, in-flight dedup) —
   `posApi.stations()` кэштэй (auth-д цэвэрлэх, station CRUD-д invalidate). `listSales` мөр тоолоход
   **`_count`** (бүх line ачаалахгүй); `getSale` бүтэн line-тэй.
+- **Гүйцэтгэлийн 3 дүрэм (хэмжсэн, 99k борлуулалт дээр):**
+  1. **Жагсаалтад хүү мөр татахгүй.** `listSales`/`listEntries` = зөвхөн скаляр + багцалсан нийлбэр
+     (`groupBy` + `Map`); мөрийг задлахад л `getSale`/`getEntry`. Journal 827KB→219KB, 114→40ms.
+  2. **Мөрийн тоог параметрээр таслах.** `salesReportQuerySchema.itemCap` (анхдагч 500, дээд 5000) —
+     дэлгэц 500, Excel экспорт л 5000-аар дуудна. Нийт/нэгтгэл нь ҮРГЭЛЖ бүх мөрөөр (DB aggregate).
+     1643KB→164KB. Мөн `sale.count`-ыг `aggregate._count`-д нэгтгэ, `saleLine.groupBy`-г түлш/бараагаар
+     2 удаа биш **1 удаа** (`by:['type','fuelGradeId','productId']`) — бүтэн скан бүр ~110-150ms.
+  3. **Хүрээ (loop) дотор query бичихгүй.** `pendingDeductionsForManyInTx` шиг `in: ids`-ээр багцал.
 - **Тайлан:** Excel = client-side exceljs (`lib/export-xlsx.ts`, динамик import); хэвлэх = `window.print()` +
   `.no-print`/`.print-area`. Шинэ тайлан = `<PrintableReport/>` + `reportsApi`.
 - **Тооцооны дэвтэр (AR/AP):** `components/account-ledger-report.tsx` — нягтлан хэлбэр (Эхний/Гүйлгээ/Эцсийн × Дебет/Кредит,

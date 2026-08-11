@@ -65,6 +65,12 @@ export const salesReportQuerySchema = z
     method: z.nativeEnum(PaymentMethod).optional(),
     status: z.nativeEnum(SaleStatus).optional(),
     search: z.string().optional(),
+    /**
+     * Гүйлгээний ЖАГСААЛТЫН дээд хязгаар. Нийт дүн/нэгтгэл нь ҮРГЭЛЖ бүх мөрөөр
+     * бодогддог тул энэ нь зөвхөн `items`-д нөлөөлнө. Дэлгэцэнд 500 хангалттай;
+     * Excel экспорт 5000-аар дуудна (1.6MB payload-ыг ~10 дахин багасгана).
+     */
+    itemCap: z.coerce.number().int().min(1).max(5000).default(500),
   })
   .refine((d) => d.from <= d.to, { message: 'from нь to-оос хойш байж болохгүй' });
 export type SalesReportQuery = z.infer<typeof salesReportQuerySchema>;

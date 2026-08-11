@@ -183,7 +183,7 @@ type RangeFilters = {
 };
 
 export const reportsApi = {
-  salesReport: (f: RangeFilters) => apiFetch<SalesReport>(`/finance/sales-report${qs(f)}`),
+  salesReport: (f: RangeFilters & { itemCap?: number }) => apiFetch<SalesReport>(`/finance/sales-report${qs(f)}`),
   vat: (f: { from: string; to: string; stationId?: string }) => apiFetch<VatReport>(`/finance/vat${qs(f)}`),
   margin: (stationId: string, from: string, to: string) =>
     apiFetch<MarginReport>(`/finance/margin${qs({ stationId, from, to })}`),

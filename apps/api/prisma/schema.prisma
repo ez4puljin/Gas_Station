@@ -597,6 +597,10 @@ model Sale {
   // advisory lock-оор цуваарлана; энэ нь эцсийн хамгаалалт (NULL олон байж болно).
   @@unique([stationId, saleNumber])
   @@index([stationId, soldAt])
+  // ГҮЙЦЭТГЭЛ: олон салбарын тайлан `stationId IN (...)` + огнооны мужаар шүүдэг тул
+  // дээрх композит индекс сонгогддоггүй (planner seq scan-ыг илүүд үздэг). Огноогоор
+  // дангаар нь индексжүүлснээр тайлангийн муж сонголттой болно (99k мөр дээр 56ms→8ms).
+  @@index([soldAt])
   @@index([shiftId])
   @@index([cashierId])
   @@index([customerId])

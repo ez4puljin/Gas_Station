@@ -108,13 +108,16 @@ export class PayrollService {
    * Зөвхөн УНШИНА (хэргийг шинэчлэхгүй) — тиймээс preview-д ч, run-д ч ижил үр дүн.
    */
   private async withDeductions(tx: Prisma.TransactionClient, companyId: string, items: ComputedItem[]): Promise<DeductedItem[]> {
-    const out: DeductedItem[] = [];
-    for (const i of items) {
-      const cases = await this.cashCases.pendingDeductionsInTx(tx, companyId, i.employeeId);
-      const { totalMnt } = allocateDeductions(i.netMnt, cases);
-      out.push({ ...i, deductionMnt: totalMnt, netBeforeDeductionMnt: i.netMnt, netMnt: i.netMnt - totalMnt });
-    }
-    return out;
+    // ГҮЙЦЭТГЭЛ: ажилтан бүрд query явуулахгүй — бүгдийг нэг дор татаж бүлэглэнэ.
+    const byEmployee = await this.cashCases.pendingDeductionsForManyInTx(
+      tx,
+      companyId,
+      items.map((i) => i.employeeId),
+    );
+    return items.map((i) => {
+      const { totalMnt } = allocateDeductions(i.netMnt, byEmployee.get(i.employeeId) ?? []);
+      return { ...i, deductionMnt: totalMnt, netBeforeDeductionMnt: i.netMnt, netMnt: i.netMnt - totalMnt };
+    });
   }
 
   /** Тооцоог урьдчилан харах (бичихгүй) — кассын дутагдлын суутгал ч харагдана. */

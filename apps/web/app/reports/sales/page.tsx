@@ -32,8 +32,9 @@ export default function SalesReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
-  // Гүйлгээний хүснэгтийн хуудаслалт — 5000 мөрийг DOM-д зурвал browser гацдаг.
-  // Excel экспорт нь ХАМААРАЛГҮЙ: тэр үргэлж бүх мөрөөр (report.items) гарна.
+  // Гүйлгээний хүснэгтийн хуудаслалт — олон мянган мөрийг DOM-д зурвал browser гацдаг.
+  // Сервер анхдагчаар эхний 500 мөр буцаана (нийт дүн/нэгтгэл нь ҮРГЭЛЖ бүх мөрөөр).
+  // Excel экспорт таслагдахгүй: `doExport` таслагдсан үед бүтнээр (itemCap=5000) дахин татна.
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100); // 0 = бүгд
 
@@ -96,6 +97,17 @@ export default function SalesReportPage() {
     if (!report) return;
     setExporting(true);
     try {
+      // Дэлгэц нь хөнгөн байхын тулд серверээс анхдагчаар 500 мөр ирдэг.
+      // Excel-д БҮХ мөр хэрэгтэй тул экспортын үед тусад нь бүтнээр татна.
+      const full = report.truncated
+        ? await reportsApi.salesReport({
+            from: f.from, to: f.to,
+            stationId: f.stationId || undefined, customerId: f.customerId || undefined,
+            fuelGradeId: f.fuelGradeId || undefined, productId: f.productId || undefined,
+            method: f.method || undefined, status: f.status || undefined,
+            search: f.search || undefined, itemCap: 5000,
+          })
+        : report;
       await exportXlsx(`borluulalt-${report.from}_${report.to}`, [
         {
           name: 'Борлуулалт',
@@ -110,7 +122,7 @@ export default function SalesReportPage() {
             { header: 'НӨАТ', key: 'vat', money: true, width: 14 },
             { header: 'Нийт', key: 'total', money: true, width: 16 },
           ],
-          rows: report.items.map((s) => ({
+          rows: full.items.map((s) => ({
             date: new Date(s.soldAt).toLocaleString('mn-MN'),
             station: s.stationLabel ?? '',
             cashier: s.cashierName ?? '',
@@ -201,7 +213,7 @@ export default function SalesReportPage() {
       </div>
 
       {report && (
-        <PrintableReport title="Борлуулалтын тайлан" rangeLabel={rangeLabel} metaLines={[`Нийт гүйлгээ: ${report.totals.count}${report.truncated ? ` (эхний 5000 харуулав)` : ''}`]} onExportXlsx={doExport} exporting={exporting}>
+        <PrintableReport title="Борлуулалтын тайлан" rangeLabel={rangeLabel} metaLines={[`Нийт гүйлгээ: ${report.totals.count}${report.truncated ? ` (эхний ${report.items.length} харуулав)` : ''}`]} onExportXlsx={doExport} exporting={exporting}>
           <section className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="Нийт борлуулалт" value={formatMnt(report.totals.grossMnt)} />
             <Stat label="НӨАТ" value={formatMnt(report.totals.vatMnt)} />

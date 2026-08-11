@@ -757,8 +757,8 @@ export class FinanceService {
       ];
     }
 
-    const CAP = 5000; // per-sale жагсаалтын дээд хязгаар (зөвхөн items-д); нийт/нэгтгэлийг DB aggregate-аар бүтнээр.
-    const [rows, total, salesAgg, refundAgg, methodAgg, gradeAgg, productAgg, customerAgg] = await Promise.all([
+    const CAP = q.itemCap; // per-sale жагсаалтын дээд хязгаар (зөвхөн items-д); нийт/нэгтгэлийг DB aggregate-аар бүтнээр.
+    const [rows, salesAgg, refundAgg, methodAgg, lineAgg, customerAgg] = await Promise.all([
       // ГҮЙЦЭТГЭЛ: зөвхөн харагдацад хэрэгтэй баганыг сонгоно. Мөрийн (SaleLine) задаргааг
       // ЭНД татахгүй — грейд/барааны задаргаа `byGrade`/`byProduct` нэгтгэлээр бүтнээр гардаг
       // (5000 борлуулалтын ~10k мөрийг татаж хаях нь тайланг 6 дахин удаашруулдаг байсан).
@@ -780,20 +780,40 @@ export class FinanceService {
         orderBy: { soldAt: 'asc' },
         take: CAP,
       }),
-      this.prisma.sale.count({ where }),
-      // Нийт дүн/НӨАТ + хэлбэр/грейд/бараа/харилцагч нэгтгэлийг БҮХ тохирох мөрөөр (CAP-аас хамааралгүй)
-      this.prisma.sale.aggregate({ where, _sum: { totalMnt: true, vatMnt: true } }),
+      // Нийт тоо/дүн/НӨАТ + хэлбэр/грейд/бараа/харилцагч нэгтгэлийг БҮХ тохирох мөрөөр (CAP-аас хамааралгүй).
+      // Тоог мөн ЭНД авна — тусдаа `sale.count` нь яг ижил бүтэн скан давхардуулдаг байсан.
+      this.prisma.sale.aggregate({ where, _sum: { totalMnt: true, vatMnt: true }, _count: { _all: true } }),
       this.prisma.refund.aggregate({ where: { sale: where }, _sum: { amountMnt: true } }),
       this.prisma.payment.groupBy({ by: ['method'], where: { sale: where }, _sum: { amountMnt: true } }),
-      this.prisma.saleLine.groupBy({ by: ['fuelGradeId'], where: { sale: where, type: 'FUEL' }, _sum: { lineTotalMnt: true, quantity: true } }),
-      this.prisma.saleLine.groupBy({ by: ['productId'], where: { sale: where, type: 'PRODUCT' }, _sum: { lineTotalMnt: true, quantity: true } }),
+      // Түлш/бараа хоёрыг НЭГ л удаа скан хийж задална (өмнө нь 2 тусдаа groupBy нь
+      // sale_line-ийг 2 удаа бүтнээр уншдаг байсан: 153ms+110ms → 131ms).
+      this.prisma.saleLine.groupBy({ by: ['type', 'fuelGradeId', 'productId'], where: { sale: where }, _sum: { lineTotalMnt: true, quantity: true } }),
       this.prisma.sale.groupBy({ by: ['customerId'], where: { ...where, customerId: { not: null } }, _sum: { totalMnt: true } }),
     ]);
 
+    // Нэг сканаас гарсан мөрийн нэгтгэлийг түлш/бараагаар салгана. Түлшийг грейдээр,
+    // бараагаар нь бараагаар дахин нийлбэрлэнэ (өмнөх 2 groupBy-тай яг ижил үр дүн).
+    // Тоо хэмжээ = Decimal — JS float ХЭРЭГЛЭХГҮЙ (§6), Decimal.plus-ээр нэмнэ.
+    const foldLines = (type: 'FUEL' | 'PRODUCT', key: 'fuelGradeId' | 'productId') => {
+      const acc = new Map<string | null, { amount: bigint; qty: Prisma.Decimal }>();
+      for (const r of lineAgg) {
+        if (r.type !== type) continue;
+        const k = r[key];
+        const cur = acc.get(k) ?? { amount: 0n, qty: new Prisma.Decimal(0) };
+        acc.set(k, {
+          amount: cur.amount + (r._sum.lineTotalMnt ?? 0n),
+          qty: cur.qty.plus(r._sum.quantity ?? 0),
+        });
+      }
+      return [...acc.entries()].map(([k, v]) => ({ key: k, amountMnt: v.amount, quantity: v.qty }));
+    };
+    const gradeAgg = foldLines('FUEL', 'fuelGradeId');
+    const productAgg = foldLines('PRODUCT', 'productId');
+
     // Нэр шийдвэрлэх — items-ийн (rows) + нэгтгэлийн (aggregate) ID-уудыг хосолж багцалж.
     const cashierIds = [...new Set(rows.map((s) => s.cashierId))];
-    const gradeIds = [...new Set(gradeAgg.map((g) => g.fuelGradeId).filter((x): x is string => !!x))];
-    const productIds = [...new Set(productAgg.map((p) => p.productId).filter((x): x is string => !!x))];
+    const gradeIds = [...new Set(gradeAgg.map((g) => g.key).filter((x): x is string => !!x))];
+    const productIds = [...new Set(productAgg.map((p) => p.key).filter((x): x is string => !!x))];
     const customerIds = [...new Set([...rows.map((s) => s.customerId), ...customerAgg.map((c) => c.customerId)].filter((x): x is string => !!x))];
     const [emps, custs, stations, grades, products] = await Promise.all([
       cashierIds.length ? this.prisma.employee.findMany({ where: { id: { in: cashierIds } }, select: { id: true, firstName: true, lastName: true } }) : Promise.resolve([]),
@@ -808,6 +828,7 @@ export class FinanceService {
     const gradeName = new Map(grades.map((g) => [g.id, g.code]));
     const productName = new Map(products.map((p) => [p.id, p.name]));
 
+    const total = salesAgg._count._all;
     const grossMnt = salesAgg._sum.totalMnt ?? 0n;
     const vatMnt = salesAgg._sum.vatMnt ?? 0n;
     const refundsMnt = refundAgg._sum.amountMnt ?? 0n;
@@ -835,8 +856,8 @@ export class FinanceService {
       filters: { stationId: q.stationId ?? null, cashierId: q.cashierId ?? null, customerId: q.customerId ?? null, fuelGradeId: q.fuelGradeId ?? null, productId: q.productId ?? null, method: q.method ?? null, status: q.status ?? null },
       truncated: total > CAP, // зөвхөн items жагсаалт таслагдсан эсэх (нийт/нэгтгэл бүтэн)
       totals: { count: total, grossMnt, vatMnt, netMnt: grossMnt - vatMnt, refundsMnt, netAfterRefundsMnt: grossMnt - refundsMnt },
-      byGrade: gradeAgg.filter((g) => g.fuelGradeId).map((g) => ({ grade: gradeName.get(g.fuelGradeId as string) ?? (g.fuelGradeId as string), liters: g._sum.quantity?.toString() ?? '0', amountMnt: g._sum.lineTotalMnt ?? 0n })),
-      byProduct: productAgg.filter((p) => p.productId).map((p) => ({ product: productName.get(p.productId as string) ?? (p.productId as string), quantity: p._sum.quantity?.toString() ?? '0', amountMnt: p._sum.lineTotalMnt ?? 0n })),
+      byGrade: gradeAgg.filter((g) => g.key).map((g) => ({ grade: gradeName.get(g.key as string) ?? (g.key as string), liters: g.quantity.toString(), amountMnt: g.amountMnt })),
+      byProduct: productAgg.filter((p) => p.key).map((p) => ({ product: productName.get(p.key as string) ?? (p.key as string), quantity: p.quantity.toString(), amountMnt: p.amountMnt })),
       byMethod,
       byCustomer: customerAgg.filter((c) => c.customerId).map((c) => ({ customer: customerName.get(c.customerId as string) ?? (c.customerId as string), amountMnt: c._sum.totalMnt ?? 0n })),
       items,

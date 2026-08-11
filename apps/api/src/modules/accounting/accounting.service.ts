@@ -355,6 +355,11 @@ export class AccountingService {
     return { start, end };
   }
 
+  /**
+   * Журналын жагсаалт. ГҮЙЦЭТГЭЛ: мөрүүдийг (JournalLine) ЭНД татахгүй — жагсаалтад
+   * зөвхөн нийт дүн л хэрэгтэй. Мөрийг задлахад `getEntry(id)`-ээр авна.
+   * (1000 бичилтийн бүх мөрийг данстай нь татах нь ~830KB payload үүсгэдэг байсан.)
+   */
   async listEntries(user: AuthUser, from: string, to: string, stationId?: string, source?: string) {
     const { start, end } = this.ubRange(from, to);
     const rows = await this.prisma.journalEntry.findMany({
@@ -365,11 +370,28 @@ export class AccountingService {
         ...(stationId ? { stationId } : {}),
         ...(source ? { source: source as JournalSource } : {}),
       },
-      include: { lines: { include: { account: { select: { code: true, name: true } } } } },
+      select: {
+        id: true, entryNo: true, date: true, source: true, memo: true,
+        stationId: true, reversedId: true, refType: true, refId: true,
+      },
       orderBy: { date: 'desc' },
       take: 1000,
     });
-    return rows;
+    if (rows.length === 0) return [];
+
+    // Нийт дүн + мөрийн тоог НЭГ багц query-гээр (бичилт бүрд тусад нь хандахгүй).
+    const sums = await this.prisma.journalLine.groupBy({
+      by: ['entryId'],
+      where: { entryId: { in: rows.map((r) => r.id) } },
+      _sum: { debitMnt: true },
+      _count: { _all: true },
+    });
+    const byEntry = new Map(sums.map((x) => [x.entryId, x]));
+    return rows.map((r) => ({
+      ...r,
+      amountMnt: byEntry.get(r.id)?._sum.debitMnt ?? 0n,
+      lineCount: byEntry.get(r.id)?._count._all ?? 0,
+    }));
   }
 
   async getEntry(user: AuthUser, id: string) {

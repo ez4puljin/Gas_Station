@@ -31,7 +31,10 @@ export interface JournalEntry {
   memo: string | null;
   stationId: string | null;
   reversedId: string | null;
-  lines: JournalLine[];
+  /** Жагсаалтад нийт дүн ирнэ; МӨРҮҮД зөвхөн `getEntry(id)`-д (payload багасгах). */
+  amountMnt?: string;
+  lineCount?: number;
+  lines?: JournalLine[];
 }
 
 export interface JournalLineInput {

@@ -245,6 +245,30 @@ export class CashAccountabilityService {
 
   // ── Цалингийн интеграци (PayrollService-ээс дуудна) ──
   /** Ажилтны цалингаас суутгах хүлээгдэж буй хэргүүд (хуучнаас нь эхлэн). */
+  /**
+   * ОЛОН ажилтны хүлээгдэж буй суутгалыг НЭГ query-гээр (ажилтан бүрд тусад нь
+   * хандахгүй — цалин бодоход N+1 үүсгэдэг байсан).
+   */
+  async pendingDeductionsForManyInTx(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    employeeIds: string[],
+  ): Promise<Map<string, { id: string; amountMnt: bigint; recoveredMnt: bigint }[]>> {
+    const out = new Map<string, { id: string; amountMnt: bigint; recoveredMnt: bigint }[]>();
+    if (employeeIds.length === 0) return out;
+    const rows = await tx.cashVarianceCase.findMany({
+      where: { companyId, employeeId: { in: employeeIds }, status: CashCaseStatus.PENDING_DEDUCTION },
+      select: { id: true, employeeId: true, amountMnt: true, recoveredMnt: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    for (const r of rows) {
+      const list = out.get(r.employeeId) ?? [];
+      list.push({ id: r.id, amountMnt: r.amountMnt, recoveredMnt: r.recoveredMnt });
+      out.set(r.employeeId, list);
+    }
+    return out;
+  }
+
   pendingDeductionsInTx(tx: Prisma.TransactionClient, companyId: string, employeeId: string) {
     return tx.cashVarianceCase.findMany({
       where: { companyId, employeeId, status: CashCaseStatus.PENDING_DEDUCTION },
