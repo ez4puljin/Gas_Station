@@ -11,6 +11,12 @@ export const createAccountSchema = z.object({
   parentCode: z.string().optional(),
   isPostable: z.boolean().default(true),
   description: z.string().optional(),
+  /// Валют — олон валютын данс (MNT/USD г.м).
+  currency: z.string().trim().min(1).max(8).default('MNT'),
+  /// Журнал — дансыг бүлэглэх нэр (ж: "Мөнгөн хөрөнгө касс").
+  journalName: z.string().trim().max(120).nullish(),
+  /// Салбар — тодорхой салбарт харьяалагдах данс. Хоосон = нийт байгууллага.
+  stationId: z.string().nullish(),
 });
 export type CreateAccountInput = z.infer<typeof createAccountSchema>;
 
@@ -19,7 +25,29 @@ export const updateAccountSchema = z.object({
   isActive: z.boolean().optional(),
   isPostable: z.boolean().optional(),
   description: z.string().nullable().optional(),
+  currency: z.string().trim().min(1).max(8).optional(),
+  journalName: z.string().trim().max(120).nullish(),
+  stationId: z.string().nullish(),
 });
+
+/** Дансны жагсаалтын шүүлт — дэлгэц дээрх хайлтын мөртэй тохирно. */
+export const accountQuerySchema = z.object({
+  /// Хайх утга (код эсвэл нэр)
+  q: z.string().trim().max(120).optional(),
+  /// Тохирох горим: агуулсан / эхэлсэн / яг тэнцүү
+  mode: z.enum(['contains', 'startsWith', 'equals']).default('contains'),
+  type: z.nativeEnum(AccountType).optional(),
+  stationId: z.string().optional(),
+  /// Идэвхгүй дансыг ХАРУУЛАХ эсэх (өгөгдмөл: зөвхөн идэвхтэй)
+  includeInactive: z.coerce.boolean().default(false),
+});
+export type AccountQuery = z.infer<typeof accountQuerySchema>;
+
+export const ACCOUNT_MATCH_MODES = [
+  { value: 'contains', label: 'Агуулсан' },
+  { value: 'startsWith', label: 'Эхэлсэн' },
+  { value: 'equals', label: 'Яг тэнцүү' },
+] as const;
 export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
 
 // ── Журналын бичилт (давхар бичилт) ──

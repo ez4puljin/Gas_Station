@@ -9,6 +9,10 @@ export interface Account {
   parentId: string | null;
   isPostable: boolean;
   isActive: boolean;
+  currency: string;
+  journalName: string | null;
+  stationId: string | null;
+  station?: { id: string; code: string; name: string } | null;
 }
 
 export interface JournalLine {
@@ -84,9 +88,13 @@ function qs(f: Record<string, string | undefined>): string {
 
 export const accountingApi = {
   setup: () => apiFetch<{ created: number }>('/accounting/setup', { method: 'POST' }),
-  accounts: () => apiFetch<Account[]>('/accounting/accounts'),
+  accounts: (q: Record<string, string> = {}) => {
+    const p = new URLSearchParams(q).toString();
+    return apiFetch<Account[]>(`/accounting/accounts${p ? `?${p}` : ''}`);
+  },
   createAccount: (body: unknown) => apiFetch<Account>('/accounting/accounts', { method: 'POST', body: JSON.stringify(body) }),
   updateAccount: (id: string, body: unknown) => apiFetch<Account>(`/accounting/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteAccount: (id: string) => apiFetch<{ deleted: boolean }>(`/accounting/accounts/${id}`, { method: 'DELETE' }),
 
   journal: (f: { from: string; to: string; stationId?: string; source?: string }) =>
     apiFetch<JournalEntry[]>(`/accounting/journal${qs(f)}`),

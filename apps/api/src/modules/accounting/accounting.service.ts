@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type {
+  AccountQuery,
   CreateAccountInput,
   CreateJournalEntryInput,
   UpdateAccountInput,
@@ -74,10 +75,75 @@ export class AccountingService {
     return { created: DEFAULT_CHART_OF_ACCOUNTS.length };
   }
 
-  async listAccounts(user: AuthUser) {
-    return this.prisma.account.findMany({
+  /**
+   * Дансны жагсаалт — дэлгэц дээрх хайлтын мөрөөр шүүнэ.
+   * Шүүлт таарсан данс бүрийн ЭЦЭГ дансуудыг мөн буцаана — эс бөгөөс мод тасарч,
+   * хүүхэд данс эзэнгүй харагдана.
+   */
+  async listAccounts(user: AuthUser, q?: AccountQuery) {
+    const all = await this.prisma.account.findMany({
       where: { companyId: user.companyId, deletedAt: null },
       orderBy: { code: 'asc' },
+      include: { station: { select: { id: true, code: true, name: true } } },
+    });
+    if (!q) return all;
+
+    const needle = (q.q ?? '').trim().toLowerCase();
+    const matches = all.filter((a) => {
+      if (!q.includeInactive && !a.isActive) return false;
+      if (q.type && a.type !== q.type) return false;
+      if (q.stationId && a.stationId !== q.stationId) return false;
+      if (!needle) return true;
+      const code = a.code.toLowerCase();
+      const name = a.name.toLowerCase();
+      if (q.mode === 'equals') return code === needle || name === needle;
+      if (q.mode === 'startsWith') return code.startsWith(needle) || name.startsWith(needle);
+      return code.includes(needle) || name.includes(needle);
+    });
+
+    // Эцэг дансуудыг нөхөж мод бүтэн байлгана
+    const byId = new Map(all.map((a) => [a.id, a]));
+    const keep = new Set<string>();
+    for (const m of matches) {
+      keep.add(m.id);
+      let p = m.parentId ? byId.get(m.parentId) : undefined;
+      while (p && !keep.has(p.id)) {
+        keep.add(p.id);
+        p = p.parentId ? byId.get(p.parentId) : undefined;
+      }
+    }
+    return all.filter((a) => keep.has(a.id));
+  }
+
+  /**
+   * Данс устгах — soft-delete (§2.6). Бичилттэй эсвэл хүүхэд данстай бол ХОРИГЛОНО:
+   * түүхэн журнал эзэнгүй үлдэх, мод тасрахаас сэргийлнэ.
+   */
+  async deleteAccount(user: AuthUser, id: string, ip: string | null) {
+    return this.prisma.$transaction(async (tx) => {
+      const acc = await tx.account.findFirst({ where: { id, companyId: user.companyId, deletedAt: null } });
+      if (!acc) throw new NotFoundException({ code: 'ACCOUNT_NOT_FOUND', message: 'Данс олдсонгүй' });
+
+      const lines = await tx.journalLine.count({ where: { accountId: id } });
+      if (lines > 0) {
+        throw new BadRequestException({
+          code: 'ACCOUNT_HAS_ENTRIES',
+          message: `Энэ дансанд ${lines} бичилт байна. Устгах боломжгүй — идэвхгүй болгоно уу`,
+        });
+      }
+      const kids = await tx.account.count({ where: { parentId: id, deletedAt: null } });
+      if (kids > 0) {
+        throw new BadRequestException({
+          code: 'ACCOUNT_HAS_CHILDREN',
+          message: `Энэ дансанд ${kids} дэд данс байна. Эхлээд тэдгээрийг устгана уу`,
+        });
+      }
+      const deleted = await tx.account.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
+      await this.audit.record(
+        { actorId: user.sub, action: AuditAction.ACCOUNT_CHANGE, entity: 'Account', entityId: id, before: acc, after: { deleted: true }, ip },
+        tx,
+      );
+      return { deleted: true, id: deleted.id };
     });
   }
 
@@ -101,6 +167,9 @@ export class AccountingService {
           isPostable: input.isPostable,
           parentId,
           description: input.description ?? null,
+          currency: input.currency,
+          journalName: input.journalName ?? null,
+          stationId: input.stationId ?? null,
         },
       });
       await this.audit.record(
@@ -121,6 +190,9 @@ export class AccountingService {
           name: input.name ?? undefined,
           isActive: input.isActive ?? undefined,
           isPostable: input.isPostable ?? undefined,
+          currency: input.currency ?? undefined,
+          journalName: input.journalName === undefined ? undefined : (input.journalName ?? null),
+          stationId: input.stationId === undefined ? undefined : (input.stationId ?? null),
           description: input.description === undefined ? undefined : input.description,
         },
       });

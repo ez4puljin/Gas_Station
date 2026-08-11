@@ -84,6 +84,7 @@ const NAV: NavGroup[] = [
       { href: '/cash', label: 'Бэлэн мөнгө / Сейф', icon: Vault },
       { href: '/cash-cases', label: 'Кассын хариуцлага', icon: ShieldAlert },
       { href: '/bank', label: 'Банкны хуулга', icon: Landmark },
+      { href: '/accounts', label: 'Данс', icon: Wallet },
       { href: '/accounting', label: 'Нягтлан бодох бүртгэл', icon: BookOpen },
       { href: '/reports', label: 'Тайлан', icon: FileText },
     ],

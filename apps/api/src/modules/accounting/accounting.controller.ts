@@ -1,6 +1,8 @@
-import { Body, Controller, Get, Ip, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Ip, Param, Patch, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import {
+  type AccountQuery,
+  accountQuerySchema,
   type AccountingPeriodQuery,
   accountingPeriodSchema,
   type BalanceSheetQuery,
@@ -34,8 +36,11 @@ export class AccountingController {
 
   @Get('accounts')
   @Roles(RoleKey.ACCOUNTANT, RoleKey.STATION_MANAGER)
-  listAccounts(@CurrentUser() user: AuthUser) {
-    return this.accounting.listAccounts(user);
+  listAccounts(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(accountQuerySchema)) q: AccountQuery,
+  ) {
+    return this.accounting.listAccounts(user, q);
   }
 
   @Post('accounts')
@@ -57,6 +62,12 @@ export class AccountingController {
     @Ip() ip: string,
   ) {
     return this.accounting.updateAccount(user, id, dto, ip ?? null);
+  }
+
+  @Delete('accounts/:id')
+  @Roles(RoleKey.ACCOUNTANT)
+  deleteAccount(@CurrentUser() user: AuthUser, @Param('id') id: string, @Ip() ip: string) {
+    return this.accounting.deleteAccount(user, id, ip ?? null);
   }
 
   // ── Журнал ──

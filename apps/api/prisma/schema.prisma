@@ -260,6 +260,7 @@ model Station {
   dailyCloses      DailyClose[]
   cashMovements    CashMovement[]
   cashCases        CashVarianceCase[]
+  accounts         Account[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -1186,6 +1187,9 @@ model Account {
   isPostable  Boolean     @default(true) @map("is_postable") // зөвхөн навч дансанд бичнэ
   isActive    Boolean     @default(true) @map("is_active")
   description String?
+  currency    String      @default("MNT") // олон валютын данс (MNT/USD)
+  journalName String?     @map("journal_name") // дансыг бүлэглэх журналын нэр
+  stationId   String?     @map("station_id") // тодорхой салбарын данс; null = нийт байгууллага
 
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1194,6 +1198,7 @@ model Account {
   company  Company       @relation(fields: [companyId], references: [id])
   parent   Account?      @relation("AccountTree", fields: [parentId], references: [id])
   children Account[]     @relation("AccountTree")
+  station  Station?      @relation(fields: [stationId], references: [id])
   lines    JournalLine[]
 
   @@unique([companyId, code])
