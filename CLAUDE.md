@@ -144,7 +144,11 @@ Web: бүх хуудас `'use client'`; бүрхүүл `components/app-shell.ts
      дэлгэц 500, Excel экспорт л 5000-аар дуудна. Нийт/нэгтгэл нь ҮРГЭЛЖ бүх мөрөөр (DB aggregate).
      1643KB→164KB. Мөн `sale.count`-ыг `aggregate._count`-д нэгтгэ, `saleLine.groupBy`-г түлш/бараагаар
      2 удаа биш **1 удаа** (`by:['type','fuelGradeId','productId']`) — бүтэн скан бүр ~110-150ms.
-  3. **Хүрээ (loop) дотор query бичихгүй.** `pendingDeductionsForManyInTx` шиг `in: ids`-ээр багцал.
+  3. **Хүрээ (loop) дотор query бичихгүй.** `pendingDeductionsForManyInTx`,
+     `stationDayTotals(ids,…)` шиг `in: ids`-ээр багцал. Нэгдсэн тайлан/KPI нь салбар бүрд
+     `stationDaySummary` (7 query) дуудахаа больж 3 багц query болсон (10 салбарт 43→16ms).
+     `sale_line`-д `stationId` байхгүй тул литрийг **параметрчилсэн `$queryRaw`**-аар
+     салбараар бүлэглэнэ (milli бүхэл тоогоор — Decimal/float хөрвүүлэлтгүй).
 - **Тайлан:** Excel = client-side exceljs (`lib/export-xlsx.ts`, динамик import); хэвлэх = `window.print()` +
   `.no-print`/`.print-area`. Шинэ тайлан = `<PrintableReport/>` + `reportsApi`.
 - **Тооцооны дэвтэр (AR/AP):** `components/account-ledger-report.tsx` — нягтлан хэлбэр (Эхний/Гүйлгээ/Эцсийн × Дебет/Кредит,

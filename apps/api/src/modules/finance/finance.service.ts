@@ -509,6 +509,67 @@ export class FinanceService {
     };
   }
 
+  /**
+   * ОЛОН салбарын нэг өдрийн нийлбэр үзүүлэлт — салбар бүрд query давтахгүйгээр НЭГ багц
+   * (3 query, салбарын тооноос хамаарахгүй). Нэгдсэн тайлан/KPI-д төлбөрийн хэлбэр, грейд,
+   * барааны задаргаа хэрэггүй тул `stationDaySummary`-г салбар тутам дуудахаа больсон
+   * (өмнө нь 7 query × N салбар).
+   */
+  private async stationDayTotals(stationIds: string[], start: Date, end: Date) {
+    type Totals = { salesCount: number; grossMnt: bigint; vatMnt: bigint; refundsMnt: bigint; fuelLitersMilli: bigint };
+    const out = new Map<string, Totals>(
+      stationIds.map((id) => [id, { salesCount: 0, grossMnt: 0n, vatMnt: 0n, refundsMnt: 0n, fuelLitersMilli: 0n }]),
+    );
+    if (stationIds.length === 0) return out;
+
+    const saleWhere = {
+      stationId: { in: stationIds },
+      deletedAt: null,
+      soldAt: { gte: start, lt: end },
+      status: { not: SaleStatus.VOIDED },
+    };
+
+    const [salesAgg, refundAgg, fuelRows] = await Promise.all([
+      this.prisma.sale.groupBy({ by: ['stationId'], where: saleWhere, _sum: { totalMnt: true, vatMnt: true }, _count: { _all: true } }),
+      // `refund.stationId` нь ҮРГЭЛЖ эх борлуулалтын салбар (pos.service.ts дахь ганц
+      // үүсгэх цэг нь `sale.stationId`-аас бичдэг) тул салбараар бүлэглэх нь эх
+      // борлуулалтаар scope хийсэнтэй ижил утгатай.
+      this.prisma.refund.groupBy({ by: ['stationId'], where: { sale: saleWhere }, _sum: { amountMnt: true } }),
+      // `sale_line`-д stationId байхгүй тул Prisma groupBy-аар салбараар бүлэглэх боломжгүй.
+      // Параметрчилсэн raw (§8: concat үгүй, зөвхөн tagged template). Литрийг milli бүхэл
+      // тоогоор нэгтгэнэ — float/Decimal хөрвүүлэлт огт үүсэхгүй (§6).
+      this.prisma.$queryRaw<{ stationId: string; litersMilli: bigint }[]>`
+        SELECT s.station_id AS "stationId",
+               COALESCE(SUM(sl.quantity * 1000), 0)::bigint AS "litersMilli"
+        FROM sale_line sl
+        JOIN sale s ON s.id = sl.sale_id
+        WHERE sl.type = 'FUEL'::"SaleItemType"
+          AND s.station_id IN (${Prisma.join(stationIds)})
+          AND s.deleted_at IS NULL
+          AND s.sold_at >= ${start}
+          AND s.sold_at < ${end}
+          AND s.status <> 'VOIDED'::"SaleStatus"
+        GROUP BY s.station_id`,
+    ]);
+
+    for (const r of salesAgg) {
+      const t = out.get(r.stationId);
+      if (!t) continue;
+      t.salesCount = r._count._all;
+      t.grossMnt = r._sum.totalMnt ?? 0n;
+      t.vatMnt = r._sum.vatMnt ?? 0n;
+    }
+    for (const r of refundAgg) {
+      const t = out.get(r.stationId);
+      if (t) t.refundsMnt = r._sum.amountMnt ?? 0n;
+    }
+    for (const r of fuelRows) {
+      const t = out.get(r.stationId);
+      if (t) t.fuelLitersMilli = BigInt(r.litersMilli);
+    }
+    return out;
+  }
+
   // ── Компанийн нэгдсэн өдрийн тайлан ─────────────────────
   async consolidatedReport(user: AuthUser, date: string) {
     const ids = await this.accessibleStationIds(user);
@@ -519,23 +580,22 @@ export class FinanceService {
     });
     const nameById = new Map(stations.map((s) => [s.id, s]));
 
-    const perStation = await Promise.all(
-      ids.map(async (id) => {
-        const s = await this.stationDaySummary(id, start, end);
-        const meta = nameById.get(id);
-        return {
-          stationId: id,
-          code: meta?.code ?? null,
-          name: meta?.name ?? null,
-          salesCount: s.salesCount,
-          grossMnt: s.grossMnt,
-          vatMnt: s.vatMnt,
-          refundsMnt: s.refundsMnt,
-          netAfterRefundsMnt: s.netAfterRefundsMnt,
-          fuelLiters: s.fuelLiters,
-        };
-      }),
-    );
+    const totalsById = await this.stationDayTotals(ids, start, end);
+    const perStation = ids.map((id) => {
+      const s = totalsById.get(id)!;
+      const meta = nameById.get(id);
+      return {
+        stationId: id,
+        code: meta?.code ?? null,
+        name: meta?.name ?? null,
+        salesCount: s.salesCount,
+        grossMnt: s.grossMnt,
+        vatMnt: s.vatMnt,
+        refundsMnt: s.refundsMnt,
+        netAfterRefundsMnt: s.grossMnt - s.refundsMnt,
+        fuelLiters: milliToDecimalString(s.fuelLitersMilli),
+      };
+    });
 
     const totals = perStation.reduce(
       (acc, s) => ({
@@ -562,44 +622,23 @@ export class FinanceService {
     });
     const meta = new Map(stations.map((s) => [s.id, s]));
 
-    const rows = await Promise.all(
-      ids.map(async (id) => {
-        const saleWhere = {
-          stationId: id,
-          deletedAt: null,
-          soldAt: { gte: start, lt: end },
-          status: { not: SaleStatus.VOIDED },
-        };
-        const [salesAgg, fuelAgg, refundAgg] = await Promise.all([
-          this.prisma.sale.aggregate({ where: saleWhere, _sum: { totalMnt: true }, _count: true }),
-          this.prisma.saleLine.aggregate({
-            where: { type: 'FUEL', sale: saleWhere },
-            _sum: { quantity: true },
-          }),
-          this.prisma.refund.aggregate({
-            where: {
-              sale: { stationId: id, soldAt: { gte: start, lt: end }, deletedAt: null, status: { not: SaleStatus.VOIDED } },
-            },
-            _sum: { amountMnt: true },
-          }),
-        ]);
-        const gross = salesAgg._sum.totalMnt ?? 0n;
-        const count = salesAgg._count;
-        const refundsMnt = refundAgg._sum.amountMnt ?? 0n;
-        const m = meta.get(id);
-        return {
-          stationId: id,
-          code: m?.code ?? null,
-          name: m?.name ?? null,
-          grossMnt: gross,
-          salesCount: count,
-          avgTicketMnt: count > 0 ? divRoundHalfUp(gross, BigInt(count)) : 0n,
-          refundsMnt,
-          netAfterRefundsMnt: gross - refundsMnt,
-          fuelLiters: fuelAgg._sum.quantity?.toString() ?? '0',
-        };
-      }),
-    );
+    // Салбар бүрд 3 query явуулахын оронд нэг багцаар (§12 гүйцэтгэлийн 3-р дүрэм).
+    const totalsById = await this.stationDayTotals(ids, start, end);
+    const rows = ids.map((id) => {
+      const t = totalsById.get(id)!;
+      const m = meta.get(id);
+      return {
+        stationId: id,
+        code: m?.code ?? null,
+        name: m?.name ?? null,
+        grossMnt: t.grossMnt,
+        salesCount: t.salesCount,
+        avgTicketMnt: t.salesCount > 0 ? divRoundHalfUp(t.grossMnt, BigInt(t.salesCount)) : 0n,
+        refundsMnt: t.refundsMnt,
+        netAfterRefundsMnt: t.grossMnt - t.refundsMnt,
+        fuelLiters: milliToDecimalString(t.fuelLitersMilli),
+      };
+    });
 
     rows.sort((a, b) => (b.grossMnt > a.grossMnt ? 1 : b.grossMnt < a.grossMnt ? -1 : 0));
     return { date: day, stations: rows };
