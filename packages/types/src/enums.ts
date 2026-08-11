@@ -207,6 +207,9 @@ export const AuditAction = {
   LEAVE_APPROVE: 'LEAVE_APPROVE',
   LEAVE_REJECT: 'LEAVE_REJECT',
   LEAVE_CANCEL: 'LEAVE_CANCEL',
+  BANK_IMPORT: 'BANK_IMPORT',
+  BANK_MATCH: 'BANK_MATCH',
+  BANK_POST: 'BANK_POST',
   CASH_CASE_OPEN: 'CASH_CASE_OPEN',
   CASH_CASE_RESOLVE: 'CASH_CASE_RESOLVE',
   PERMISSION_CHANGE: 'PERMISSION_CHANGE',
@@ -274,6 +277,7 @@ export const JournalSource = {
   SUPPLIER_PAYMENT: 'SUPPLIER_PAYMENT',
   CUSTOMER_PAYMENT: 'CUSTOMER_PAYMENT',
   CASH: 'CASH',
+  BANK: 'BANK',
   PAYROLL: 'PAYROLL',
   EOD: 'EOD',
   OPENING: 'OPENING',
@@ -309,6 +313,7 @@ export const JOURNAL_SOURCE_LABEL: Record<JournalSource, string> = {
   SUPPLIER_PAYMENT: 'Нийлүүлэгчид төлсөн',
   CUSTOMER_PAYMENT: 'Харилцагчаас авсан',
   CASH: 'Касс хөдөлгөөн',
+  BANK: 'Банкны хуулга',
   PAYROLL: 'Цалин',
   EOD: 'Өдрийн хаалт',
   OPENING: 'Эхний үлдэгдэл',
@@ -339,5 +344,6 @@ export const STD_ACCOUNT = {
   WAGES: '7100', // Цалин зардал
   SOCIAL_INS_EXP: '7110', // НДШ зардал (ажил олгогч)
   DEPRECIATION: '7400', // Элэгдэл
+  OTHER_EXPENSE: '7500', // Бусад зардал (банкны шимтгэл г.м)
   SHRINKAGE: '7900', // Хорогдол/алдагдал
 } as const;

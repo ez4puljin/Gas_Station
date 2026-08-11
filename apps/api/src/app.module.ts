@@ -15,6 +15,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BankModule } from './modules/bank/bank.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { HealthModule } from './modules/health/health.module';
@@ -58,6 +59,7 @@ import { SyncModule } from './modules/sync/sync.module';
     ProcurementModule,
     AccountingModule,
     CashAccountabilityModule,
+    BankModule,
     PayrollModule,
     AdminModule,
   ],

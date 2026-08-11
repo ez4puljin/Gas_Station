@@ -132,6 +132,7 @@ enum JournalSource {
   SUPPLIER_PAYMENT // нийлүүлэгчид төлсөн
   CUSTOMER_PAYMENT // харилцагчаас авсан
   CASH // касс хөдөлгөөн (drop/safe)
+  BANK // банкны хуулгаас
   PAYROLL // цалин
   EOD // өдрийн хаалт
   OPENING // эхний үлдэгдэл
@@ -164,6 +165,14 @@ enum LeaveStatus {
   APPROVED
   REJECTED
   CANCELLED
+}
+
+/// Банкны хуулгын мөрийг юунд тааруулсан.
+enum BankMatchType {
+  CUSTOMER_PAYMENT // харилцагчаас орсон төлбөр  → авлага хаана
+  SUPPLIER_PAYMENT // нийлүүлэгчид төлсөн        → өглөг хаана
+  GL_ENTRY // шууд дансны бичилт (шимтгэл, бусад орлого/зардал)
+  IGNORED // тооцохгүй (дотоод шилжүүлэг г.м)
 }
 
 enum CashCaseStatus {
@@ -207,6 +216,7 @@ model Company {
   payrollRuns    PayrollRun[]
   leaveRequests  LeaveRequest[]
   cashCases      CashVarianceCase[]
+  bankStatements BankStatement[]
 
   @@map("company")
 }
@@ -494,6 +504,7 @@ model Supplier {
   products     Product[]
   purchases    Purchase[]
   transactions SupplierTransaction[]
+  bankTxns     BankTransaction[]
 
   @@index([companyId])
   @@map("supplier")
@@ -1034,6 +1045,7 @@ model Customer {
   company      Company               @relation(fields: [companyId], references: [id])
   transactions CustomerTransaction[]
   sales        Sale[]
+  bankTxns     BankTransaction[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -1329,6 +1341,70 @@ model PayrollItem {
   @@index([payrollRunId])
   @@index([employeeId])
   @@map("payroll_item")
+}
+
+/// Банкнаас татсан хуулга (нэг файл = нэг хуулга).
+model BankStatement {
+  id            String    @id @default(cuid())
+  companyId     String    @map("company_id")
+  accountNumber String    @map("account_number")
+  currency      String    @default("MNT")
+  dateFrom      DateTime? @map("date_from") @db.Date
+  dateTo        DateTime? @map("date_to") @db.Date
+  filename      String    @default("")
+  /// Энэ банкны данс GL-ийн аль данстай тохирох (өгөгдмөл 1110 Харилцах).
+  glAccountCode String    @default("1110") @map("gl_account_code")
+
+  uploadedById String   @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company      Company           @relation(fields: [companyId], references: [id])
+  transactions BankTransaction[]
+
+  @@index([companyId, accountNumber])
+  @@index([companyId, dateFrom])
+  @@map("bank_statement")
+}
+
+/// Хуулгын нэг мөр. Банкнаас ирсэн хэсэг + хэрэглэгчийн тааруулсан хэсэг + бичилт.
+model BankTransaction {
+  id          String @id @default(cuid())
+  statementId String @map("statement_id")
+
+  // ── Банкнаас ирсэн (өөрчлөгдөхгүй) ──
+  txnDate         DateTime @map("txn_date") @db.Date
+  debitMnt        BigInt   @default(0) @map("debit_mnt") // мөнгө ГАРСАН
+  creditMnt       BigInt   @default(0) @map("credit_mnt") // мөнгө ОРСОН
+  bankDescription String   @default("") @map("bank_description")
+  bankCounterpart String   @default("") @map("bank_counterpart")
+  isFee           Boolean  @default(false) @map("is_fee")
+  isSettlement    Boolean  @default(false) @map("is_settlement")
+
+  // ── Хэрэглэгчийн тааруулалт ──
+  matchType   BankMatchType?
+  description String         @default("")
+  customerId  String?        @map("customer_id")
+  supplierId  String?        @map("supplier_id")
+  /// GL_ENTRY үед — эсрэг талын дансны код.
+  accountCode String?        @map("account_code")
+
+  // ── Бүртгэсэн бичилт (буцаахад цэвэрлэгдэнэ) ──
+  journalEntryId String?   @map("journal_entry_id")
+  postedAt       DateTime? @map("posted_at") @db.Timestamptz(6)
+  postedById     String?   @map("posted_by_id")
+
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  statement BankStatement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  customer  Customer?     @relation(fields: [customerId], references: [id])
+  supplier  Supplier?     @relation(fields: [supplierId], references: [id])
+
+  @@index([statementId, sortOrder])
+  @@index([txnDate])
+  @@map("bank_transaction")
 }
 
 /// Кассын зөрүүний хэрэг — ээлж хаахад зөрүү гарвал автоматаар үүсч, ажилтанд хариуцуулна.

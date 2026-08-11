@@ -6,6 +6,7 @@ export * from './payroll';
 export * from './attendance';
 export * from './leave';
 export * from './cash-accountability';
+export * from './bank-statement';
 export * from './common';
 export * from './auth';
 export * from './station';
